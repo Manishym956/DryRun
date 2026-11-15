@@ -27,3 +27,8 @@ openai>=1.43.0
 
 # Optional: server-side PDF generation alternative
 reportlab>=4.2.2
+
+# Voice-first interviewer (server.py)
+google-genai>=3.3.0
+fastapi>=0.115.0
+uvicorn>=0.30.0

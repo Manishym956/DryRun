@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interview report</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<nav><a href="/">New interview</a><a href="/history.html">History</a></nav>
+<main>
+  <h1 id="title">Interview report</h1>
+  <p id="meta" class="sub"></p>
+  <p id="msg" role="status" class="status">Loading…</p>
+
+  <section id="results" class="card hidden" aria-live="polite"></section>
+  <section id="replay" class="card hidden">
+    <h2>Replay</h2>
+    <audio id="player" controls preload="auto"></audio>
+  </section>
+  <section id="questions" class="card hidden"><h2>Question by question</h2></section>
+  <section id="code" class="card hidden"><h2>Your code</h2></section>
+  <section id="transcript" class="card hidden"><h2>Transcript</h2></section>
+</main>
+
+<script src="/common.js"></script>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+let hasAudio = false;
+
+function seek(seconds) {
+  if (!hasAudio) return;
+  const p = $('player');
+  p.currentTime = Math.max(0, seconds - 1);  // captions arrive ~1 s after speech starts
+  p.play();
+  $('replay').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function loadRecording() {
+  // Fetch the whole file: MediaRecorder webm has no seek index, so it only seeks reliably from memory.
+  const blob = await (await api(`/api/sessions/${id}/recording`)).blob();
+  const p = $('player');
+  p.src = URL.createObjectURL(blob);
+  p.addEventListener('loadedmetadata', () => {
+    if (p.duration !== Infinity) return;
+    // Chrome reports Infinity for MediaRecorder webm until it has scanned to the end once.
+    p.currentTime = 1e101;
+    p.addEventListener('timeupdate', () => { p.currentTime = 0; }, { once: true });
+  }, { once: true });
+  hasAudio = true;
+  $('replay').classList.remove('hidden');
+}
+
+function playButton(seconds, label) {
+  const b = el('button', label ?? `▶ ${fmtTime(seconds)}`, 'small');
+  b.type = 'button';
+  b.setAttribute('aria-label', `Play recording from ${fmtTime(seconds)}`);
+  b.onclick = () => seek(seconds);
+  return b;
+}
+
+function render(s) {
+  const ev = s.evaluation;
+  const r = $('results'); r.replaceChildren(); r.classList.remove('hidden');
+  r.append(el('h2', `Recommendation: ${ev.hiringRecommendation}`), el('p', ev.overallFeedback));
+  for (const sc of ev.scores) {
+    const row = el('div', null, 'score');
+    row.append(el('div', sc.score ?? '–', 'n'));
+    const d = el('div'); d.append(el('b', sc.dimension + (sc.score == null ? ' (not assessed)' : '')), el('div', sc.justification));
+    row.append(d); r.append(row);
+  }
+  const pdf = el('a', 'Download PDF report', 'btn'); pdf.href = `/api/sessions/${id}/report.pdf`; r.append(pdf);
+
+  const qs = $('questions'); qs.classList.remove('hidden');
+  for (const q of ev.questions) {
+    const d = el('div', null, 'q'), head = el('div', null, 'q-head');
+    head.append(el('b', q.question));
+    if (hasAudio && q.askedAtSeconds != null) head.append(playButton(q.askedAtSeconds));
+    d.append(head);
+    for (const [k, v] of [['You said', q.answerSummary], ['Strong answer', q.modelAnswer], ['Missing', q.missing]]) {
+      const p = el('p'); p.append(el('b', k + ': '), document.createTextNode(v)); d.append(p);
+    }
+    qs.append(d);
+  }
+
+  const code = Object.entries(s.code || {}).filter(([, c]) => c.trim());
+  if (code.length) {
+    $('code').classList.remove('hidden');
+    for (const [i, c] of code) $('code').append(el('h3', s.topics[+i]?.topic ?? 'Coding'), el('pre', c));
+  }
+
+  const t = $('transcript'); t.classList.remove('hidden');
+  for (const turn of s.turns) {
+    const d = el('div', null, 'turn ' + turn.speaker);
+    if (hasAudio) d.append(playButton(turn.t_ms / 1000, fmtTime(turn.t_ms / 1000)));
+    d.append(el('b', turn.speaker === 'ai' ? 'Interviewer: ' : 'You: '), el('span', turn.text));
+    t.append(d);
+  }
+}
+
+(async () => {
+  try {
+    if (!id) throw new Error('No interview selected.');
+    let s = await api(`/api/sessions/${id}`);
+    $('title').textContent = `${s.name}: ${s.role}`;
+    $('meta').textContent = [fmtDate(s.created_at), s.difficulty, PERSONA_LABELS[s.persona]].filter(Boolean).join(' · ');
+    if (s.recording) await loadRecording().catch(err => console.warn('recording unavailable', err));
+    if (!s.evaluation) {
+      if (!s.turns.some(t => t.speaker === 'user')) throw new Error('This interview has no answers to evaluate.');
+      $('msg').textContent = 'Evaluating your answers… (about 15 seconds)';
+      s.evaluation = await api(`/api/sessions/${id}/evaluate`, { method: 'POST' });
+    }
+    $('msg').classList.add('hidden');
+    render(s);
+  } catch (err) {
+    $('msg').textContent = err.message; $('msg').className = 'error';
+    const retry = el('button', 'Try again'); retry.onclick = () => location.reload(); $('msg').after(retry);
+  }
+})();
+</script>
+</body>
+</html>

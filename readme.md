@@ -34,6 +34,25 @@ azure-cognitiveservices-speech>=1.40.0
 reportlab>=4.2.2
 ```
 
+## Voice Interviewer (new)
+
+A live spoken interview: the AI listens, asks follow-ups, adapts difficulty to your answers, and tailors questions to your resume and the job description. It's built on the Gemini Live API.
+
+```sh
+pip install -r requirements.txt
+uvicorn server:app --reload
+```
+
+Open http://localhost:8000 in Chrome or Edge, allow the microphone, and use headphones for the best results.
+
+- `server.py`: FastAPI app. It plans the interview, relays audio to Gemini Live, and evaluates the transcript.
+- `interview.py`: interview state (adaptive difficulty, notes, transcript) and the interviewer prompt. Tests are in `test_interview.py`.
+- `static/index.html`: the browser UI (mic capture, playback, live captions, report).
+- Sessions are saved to `sessions/*.json`.
+- Optional `.env` overrides: `LIVE_MODEL`, `TEXT_MODEL`.
+
+The original Streamlit app (`app.py`) still works with `streamlit run app.py`.
+
 ## Setup
 
 1. Clone the repository

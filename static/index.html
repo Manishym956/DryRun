@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Voice Interviewer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<nav><a href="/" aria-current="page">New interview</a><a href="/history.html">History</a></nav>
+<main>
+  <h1>AI Voice Interviewer</h1>
+  <p class="sub">A live spoken interview that adapts to your answers.</p>
+
+  <section id="setup" class="card">
+    <form id="setupForm">
+      <div class="row">
+        <div><label for="name">Your name</label><input id="name" required maxlength="100" autocomplete="name"></div>
+        <div><label for="role">Role</label><input id="role" required maxlength="100" value="Software Engineer"></div>
+      </div>
+      <div class="row">
+        <div><label for="difficulty">Level</label>
+          <select id="difficulty"><option>Beginner</option><option selected>Intermediate</option><option>Advanced</option></select></div>
+        <div><label for="persona">Interviewer</label>
+          <select id="persona">
+            <option value="friendly">Friendly mentor</option>
+            <option value="bar_raiser">Tough bar-raiser</option>
+            <option value="startup_cto">Startup CTO</option>
+          </select></div>
+      </div>
+      <label for="resume">Resume (PDF or .txt, optional)</label><input id="resume" type="file" accept=".pdf,.txt">
+      <label for="jd">Job description (optional)</label><textarea id="jd" maxlength="20000" placeholder="Paste the job description to get targeted questions"></textarea>
+      <label class="check"><input id="coding" type="checkbox" checked> Include a coding round</label>
+      <label class="check"><input id="record" type="checkbox" checked> Record the interview for replay</label>
+      <button id="startBtn" type="submit">Prepare interview</button>
+      <p id="setupMsg" role="status"></p>
+    </form>
+  </section>
+
+  <section id="live" class="card hidden">
+    <div class="live-head"><span id="status" class="status" role="status">Connecting…</span><span id="timer" class="muted"></span></div>
+    <div id="orb" class="orb" aria-hidden="true"></div>
+    <div id="coding-panel" class="hidden">
+      <h2 id="problemTitle"></h2>
+      <pre id="problem"></pre>
+      <label for="code">Your code (the interviewer can read it)</label>
+      <textarea id="code" class="code" spellcheck="false" autocapitalize="off"></textarea>
+    </div>
+    <h3>Captions</h3>
+    <div id="captions" aria-live="polite"></div>
+    <button id="endBtn" class="end" type="button">End interview</button>
+  </section>
+</main>
+
+<script src="/common.js"></script>
+<script>
+let ws, sessionId, micCtx, playCtx, micStream, recDest, recorder, playTime = 0, maxMinutes = 30, startedAt;
+const playing = new Set(), recChunks = [];
+
+$('setupForm').onsubmit = async e => {
+  e.preventDefault();
+  // Create audio contexts during the click: browsers keep contexts made later (after the slow plan request) suspended.
+  playCtx ??= new AudioContext({ sampleRate: 24000 });  // Gemini speaks 24 kHz PCM16
+  micCtx ??= new AudioContext({ sampleRate: 16000 });   // Gemini listens to 16 kHz PCM16; browser resamples the mic
+  $('startBtn').disabled = true; $('setupMsg').textContent = 'Reading your background and planning questions…'; $('setupMsg').className = '';
+  try {
+    const body = { name: $('name').value.trim(), role: $('role').value.trim(), difficulty: $('difficulty').value,
+                   persona: $('persona').value, job_description: $('jd').value, coding_round: $('coding').checked };
+    const file = $('resume').files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) throw new Error('Resume must be under 5 MB');
+      body.resume_b64 = await fileToBase64(file);
+      body.resume_mime = file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/plain';
+    }
+    const s = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    sessionId = s.id; maxMinutes = s.max_minutes;
+    await startInterview();
+  } catch (err) {
+    $('setupMsg').textContent = err.message; $('setupMsg').className = 'error'; $('startBtn').disabled = false;
+  }
+};
+
+function fileToBase64(file) {
+  return new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = fail; r.readAsDataURL(file); });
+}
+
+async function startInterview() {
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  $('setup').classList.add('hidden'); $('live').classList.remove('hidden');
+  await Promise.all([playCtx.resume(), micCtx.resume()]);
+
+  const worklet = `class Mic extends AudioWorkletProcessor { process(i) { if (i[0][0]) this.port.postMessage(i[0][0].slice(0)); return true; } } registerProcessor('mic', Mic);`;
+  await micCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([worklet], { type: 'application/javascript' })));
+  const node = new AudioWorkletNode(micCtx, 'mic');
+  const mute = micCtx.createGain(); mute.gain.value = 0;
+  micCtx.createMediaStreamSource(micStream).connect(node); node.connect(mute).connect(micCtx.destination);
+
+  let chunks = [], count = 0;
+  node.port.onmessage = ({ data }) => {
+    chunks.push(data); count += data.length;
+    if (count < 1600) return;  // send every ~100 ms
+    const pcm = new Int16Array(count); let o = 0;
+    for (const c of chunks) for (const s of c) pcm[o++] = Math.max(-1, Math.min(1, s)) * 0x7fff;
+    chunks = []; count = 0;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(pcm.buffer);
+  };
+
+  // Recording: mix the mic and the interviewer's voice into one track.
+  const mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(m => window.MediaRecorder?.isTypeSupported(m));
+  if ($('record').checked && mime) {
+    recDest = playCtx.createMediaStreamDestination();
+    playCtx.createMediaStreamSource(micStream).connect(recDest);
+    recorder = new MediaRecorder(recDest.stream, { mimeType: mime });
+    recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
+  }
+
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/${sessionId}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    recorder?.start(1000);  // the server starts its transcript clock at the same moment
+    startedAt = Date.now();
+    setInterval(() => { $('timer').textContent = `${fmtTime((Date.now() - startedAt) / 1000)} / ${fmtTime(maxMinutes * 60)}`; }, 1000);
+    $('status').textContent = 'Live. Speak naturally; you can interrupt at any time.';
+  };
+  ws.onmessage = ({ data }) => {
+    if (data instanceof ArrayBuffer) return play(data);
+    const msg = JSON.parse(data);
+    if (msg.type === 'transcript') caption(msg.speaker, msg.text);
+    else if (msg.type === 'interrupted') stopPlayback();
+    else if (msg.type === 'status') $('status').textContent = msg.text;
+    else if (msg.type === 'error') connectionError = msg.text;
+    else if (msg.type === 'limits') maxMinutes = msg.max_minutes;
+    else if (msg.type === 'topic') showTopic(msg);
+    else if (msg.type === 'ended') finish();
+  };
+  ws.onclose = () => finish();
+  $('endBtn').onclick = () => { $('endBtn').disabled = true; if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end' })); };
+}
+
+function showTopic(msg) {
+  const coding = msg.kind === 'coding';
+  $('coding-panel').classList.toggle('hidden', !coding);
+  if (!coding) return;
+  $('problemTitle').textContent = msg.topic; $('problem').textContent = msg.problem;
+  if (!$('code').value) $('code').value = msg.code || '';
+  $('code').focus();
+}
+
+let codeTimer;
+$('code').addEventListener('input', () => {
+  clearTimeout(codeTimer);
+  codeTimer = setTimeout(() => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'code', code: $('code').value })), 800);
+});
+$('code').addEventListener('keydown', e => {
+  if (e.key !== 'Tab' || e.shiftKey) return;  // Shift+Tab still leaves the editor for keyboard users
+  e.preventDefault();
+  $('code').setRangeText('    ', $('code').selectionStart, $('code').selectionEnd, 'end');
+  $('code').dispatchEvent(new Event('input'));
+});
+
+function play(buf) {
+  const pcm = new Int16Array(buf), f = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768;
+  const b = playCtx.createBuffer(1, f.length, 24000); b.copyToChannel(f, 0);
+  const src = playCtx.createBufferSource(); src.buffer = b; src.connect(playCtx.destination);
+  if (recDest) src.connect(recDest);
+  playTime = Math.max(playTime, playCtx.currentTime); src.start(playTime); playTime += b.duration;
+  playing.add(src); $('orb').classList.add('speaking');
+  src.onended = () => { playing.delete(src); if (!playing.size) $('orb').classList.remove('speaking'); };
+}
+function stopPlayback() { for (const s of playing) s.stop(); playing.clear(); playTime = 0; $('orb').classList.remove('speaking'); }
+
+function caption(speaker, text) {
+  const box = $('captions'), last = box.lastElementChild;
+  if (last && last.dataset.speaker === speaker) last.querySelector('span').textContent += text;
+  else {
+    const d = el('div', null, 'turn ' + speaker); d.dataset.speaker = speaker;
+    d.append(el('b', speaker === 'ai' ? 'Interviewer: ' : 'You: '), el('span', text)); box.appendChild(d);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+let finished = false, connectionError = null;
+async function finish() {
+  if (finished) return; finished = true;
+  $('endBtn').disabled = true;
+  $('status').textContent = 'Interview over. Saving…';
+  // Let the goodbye finish playing (it is also being recorded), up to 15 s.
+  for (let i = 0; i < 150 && playing.size; i++) await new Promise(r => setTimeout(r, 100));
+  micStream?.getTracks().forEach(t => t.stop()); micCtx?.close();
+  try {
+    if (recorder?.state === 'recording') {
+      await new Promise(r => { recorder.onstop = r; recorder.stop(); });
+      const blob = new Blob(recChunks, { type: recorder.mimeType.split(';')[0] });
+      await api(`/api/sessions/${sessionId}/recording`, { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
+    }
+  } catch (err) { console.warn('recording upload failed', err); }  // the report still works without it
+  if (connectionError) { $('status').textContent = connectionError; await new Promise(r => setTimeout(r, 2500)); }
+  location.href = `/report.html?id=${encodeURIComponent(sessionId)}`;  // the report page runs the evaluation
+}
+</script>
+</body>
+</html>

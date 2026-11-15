@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interview history</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<nav><a href="/">New interview</a><a href="/history.html" aria-current="page">History</a></nav>
+<main>
+  <h1>Your progress</h1>
+  <p class="sub">Scores across your mock interviews, and what keeps coming up.</p>
+  <p id="msg" role="status" class="status">Loading…</p>
+
+  <div id="content" class="hidden">
+    <label for="who">Candidate</label>
+    <select id="who"></select>
+
+    <section class="card">
+      <h2>Scores over time</h2>
+      <div class="legend" id="legend"></div>
+      <div class="chart" id="chart"></div>
+      <p class="muted" id="chartNote"></p>
+    </section>
+
+    <section class="card">
+      <h2>Recurring weak spots</h2>
+      <p class="muted">Looks across all your evaluated interviews for problems that keep coming back.</p>
+      <button id="insightsBtn" type="button">Find my weak spots</button>
+      <div id="insights" aria-live="polite"></div>
+    </section>
+
+    <section class="card">
+      <h2>All interviews</h2>
+      <table>
+        <thead><tr><th>Date</th><th>Role</th><th>Level</th><th>Interviewer</th><th>Tech</th><th>Behavioral</th><th>Comm.</th><th>Result</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+
+<script src="/common.js"></script>
+<script>
+const DIMS = [
+  { key: 'Technical Knowledge', short: 'Technical', color: 'var(--s1)' },
+  { key: 'Behavioral Fit', short: 'Behavioral', color: 'var(--s2)' },
+  { key: 'Communication', short: 'Communication', color: 'var(--s3)' },
+];
+const SVG = 'http://www.w3.org/2000/svg';
+let all = [];
+
+function svg(tag, attrs, parent) {
+  const e = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent?.append(e);
+  return e;
+}
+
+function drawChart(rows) {  // rows: oldest first, evaluated only
+  const box = $('chart'); box.replaceChildren();
+  $('legend').replaceChildren(...DIMS.map(d => { const s = el('span', d.short); const i = el('i'); i.style.background = d.color; s.prepend(i); return s; }));
+  $('chartNote').textContent = rows.length < 2 ? 'Do one more interview to see a trend.' : '';
+  const W = 720, H = 260, m = { l: 32, r: 110, t: 12, b: 28 };
+  const x = i => m.l + (rows.length === 1 ? (W - m.l - m.r) / 2 : i * (W - m.l - m.r) / (rows.length - 1));
+  const y = v => m.t + (10 - v) * (H - m.t - m.b) / 10;
+  const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img',
+    'aria-label': `Scores out of 10 across ${rows.length} interviews. The table below has the same data.` }, box);
+
+  for (const v of [0, 5, 10]) {  // recessive grid
+    svg('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: 'var(--line)', 'stroke-width': 1 }, root);
+    svg('text', { x: m.l - 8, y: y(v) + 4, 'text-anchor': 'end', fill: 'var(--muted)', 'font-size': 12 }, root).textContent = v;
+  }
+  const step = Math.ceil(rows.length / 6);  // at most ~6 date labels
+  rows.forEach((r, i) => {
+    if (i % step && i !== rows.length - 1) return;
+    svg('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 12 }, root).textContent =
+      new Date(r.created_at * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  });
+
+  const ends = [];
+  for (const d of DIMS) {
+    // Break the line where a dimension was not assessed instead of drawing through it.
+    let path = '', pen = false;
+    rows.forEach((r, i) => {
+      const v = r.scores[d.key];
+      if (v == null) { pen = false; return; }
+      path += `${pen ? 'L' : 'M'}${x(i)},${y(v)} `; pen = true;
+    });
+    if (path) svg('path', { d: path, fill: 'none', stroke: d.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, root);
+    rows.forEach((r, i) => {
+      const v = r.scores[d.key];
+      if (v != null) svg('circle', { cx: x(i), cy: y(v), r: 4, fill: d.color, stroke: 'var(--card)', 'stroke-width': 2 }, root);
+    });
+    const last = rows.map((r, i) => [i, r.scores[d.key]]).filter(([, v]) => v != null).pop();
+    if (last) ends.push({ d, x: x(last[0]), y: y(last[1]) });
+  }
+  // Direct labels at line ends, nudged apart so equal scores don't overlap.
+  ends.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 15);
+  for (const e of ends) svg('text', { x: e.x + 10, y: e.y + 4, fill: 'var(--muted)', 'font-size': 12 }, root).textContent = e.d.short;
+
+  // Hover: crosshair + tooltip on the nearest interview.
+  const cross = svg('line', { y1: m.t, y2: H - m.b, stroke: 'var(--muted)', 'stroke-width': 1, visibility: 'hidden' }, root);
+  const tip = el('div', null, 'tooltip hidden'); box.append(tip);
+  const hit = svg('rect', { x: m.l - 16, y: 0, width: W - m.l - m.r + 32, height: H, fill: 'transparent' }, root);
+  hit.addEventListener('pointermove', ev => {
+    const pt = root.getBoundingClientRect(), sx = (ev.clientX - pt.left) * W / pt.width;
+    const i = rows.length === 1 ? 0 : Math.max(0, Math.min(rows.length - 1, Math.round((sx - m.l) / ((W - m.l - m.r) / (rows.length - 1)))));
+    const r = rows[i];
+    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
+    tip.replaceChildren(el('b', fmtDate(r.created_at)), el('div', r.role, 'muted'));
+    for (const d of DIMS) { const line = el('div', `${d.short}: ${r.scores[d.key] ?? '–'}`); const dot = el('i'); dot.style.background = d.color; line.prepend(dot); tip.append(line); }
+    tip.classList.remove('hidden');
+    const px = x(i) * pt.width / W;
+    tip.style.left = `${px + 180 > pt.width ? px - 172 : px + 12}px`; tip.style.top = '8px';
+  });
+  hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); tip.classList.add('hidden'); });
+}
+
+function render() {
+  const name = $('who').value;
+  const mine = all.filter(r => r.ended && r.name.toLowerCase() === name.toLowerCase());
+  const evaluated = mine.filter(r => Object.keys(r.scores).length).reverse();
+  drawChart(evaluated);
+  $('insights').replaceChildren();
+  const tb = $('rows'); tb.replaceChildren();
+  for (const r of mine) {
+    const tr = el('tr');
+    const cells = [fmtDate(r.created_at), r.role, r.difficulty || '–', PERSONA_LABELS[r.persona] || r.persona,
+                   ...DIMS.map(d => r.scores[d.key] ?? '–'), r.recommendation || 'Not evaluated'];
+    cells.forEach((c, i) => tr.append(el('td', c, i >= 4 && i <= 6 ? 'num' : '')));
+    const td = el('td'), a = el('a', 'Report'); a.href = `/report.html?id=${encodeURIComponent(r.id)}`; a.style.color = 'var(--accent)';
+    td.append(a); tr.append(td); tb.append(tr);
+  }
+}
+
+$('insightsBtn').onclick = async () => {
+  const b = $('insightsBtn'), out = $('insights');
+  b.disabled = true; out.replaceChildren(el('p', 'Analyzing your interviews…', 'muted'));
+  try {
+    const res = await api('/api/insights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: $('who').value }) });
+    out.replaceChildren();
+    for (const w of res.weakSpots) {
+      const d = el('div', null, 'q'); d.append(el('b', w.area));
+      for (const [k, v] of [['Evidence', w.evidence], ['Practice', w.practice]]) { const p = el('p'); p.append(el('b', k + ': '), document.createTextNode(v)); d.append(p); }
+      out.append(d);
+    }
+    if (res.strengths.length) { out.append(el('h3', 'Consistent strengths')); const ul = el('ul'); res.strengths.forEach(s => ul.append(el('li', s))); out.append(ul); }
+  } catch (err) { out.replaceChildren(el('p', err.message, 'error')); }
+  b.disabled = false;
+};
+
+(async () => {
+  try {
+    all = (await api('/api/sessions')).filter(r => r.ended);
+    if (!all.length) { $('msg').textContent = 'No interviews yet. Start one from "New interview".'; return; }
+    const names = [...new Map(all.map(r => [r.name.toLowerCase(), r.name])).values()];  // most recent first
+    $('who').replaceChildren(...names.map(n => { const o = el('option', n); o.value = n; return o; }));
+    $('who').onchange = render;
+    $('msg').classList.add('hidden'); $('content').classList.remove('hidden');
+    render();
+  } catch (err) { $('msg').textContent = err.message; $('msg').className = 'error'; }
+})();
+</script>
+</body>
+</html>

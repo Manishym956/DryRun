@@ -1,0 +1,45 @@
+1. Make the interview adaptive
+
+- Follow-up questions. After each answer, the AI decides whether to dig deeper ("You mentioned caching, how would you handle invalidation?"), move on, or give a hint. This one change does the most to stop it feeling like a quiz.
+- Difficulty that adjusts as you go. Strong answers lead to harder questions and weak ones to easier ones, so every candidate ends up being tested at their own level.
+- Interviewer personas. For example, a friendly mentor, a tough FAANG bar-raiser, or a distracted startup CTO who interrupts. Each would have its own tone, pacing and follow-up style.
+
+2. Make it real-time and voice-first
+
+- Hold a live spoken conversation instead of typing into a text box. Gemini's Live API can do streaming voice back and forth, which would replace the separate speech-to-text and text-to-speech steps.
+- The AI could interrupt rambling answers and react to long silences ("Take your time, want a hint?").
+- Finish the webcam feature (the readme marks it "under-progress") so it gives feedback on eye contact, filler words ("um", "like") and speaking pace.
+
+3. Ground it in the candidate's background
+
+- Upload a resume and a job description. Questions then target the gaps between the two ("Your resume says Kafka, but the job needs RabbitMQ. Compare them.").
+- Company-specific modes. Feed in a company's values or enginee-fit questions for that company.
+
+4. Add a live coding and whiteboard round
+
+- Add an in-browser code editor (Monaco). The AI watches you c a hashmap here?", and runs hidden test cases.
+- A system design canvas where you draw boxes and arrows and the AI critiques your architecture.
+
+5. Make the feedback useful
+
+- Show what a strong answer looks like. After each answer, put yours next to a model answer and highlight exactly what was missing.
+- Track progress over time with a dashboard showing scores per skill across sessions ("Behavioral is up 20% this month").
+- Replay with notes. Play back the recording with AI comments pinned to timestamps.
+- Concrete next steps instead of a bare score, for example "Practice STAR format; here are 3 drills".
+
+6. Add game-like and social elements
+
+- Daily streaks, a "survive the bar-raiser" challenge mode, and skill badges.
+- Peer mock mode. Two users interview each other while the AI r both.
+- A shareable scorecard link to show off a strong result.
+
+7. Move to a better tech stack
+
+Streamlit reruns the entire script on every interaction, which makes real-time voice and video painful. For a serious version, I'd suggest:
+- A Next.js frontend with a FastAPI backend, connected over We
+- Postgres to store session history.
+- Keep Gemini for the AI.
+
+My pick
+
+If you only build one thing, build a voice-first adaptive interviewer that asks follow-ups and reads your resume (ideas 1, 2 and 3 together). That's what would make it feel like a real interview. The other ideas add features on top of it.
