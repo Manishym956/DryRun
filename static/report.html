@@ -21,6 +21,7 @@
   <section id="questions" class="card hidden"><h2>Question by question</h2></section>
   <section id="code" class="card hidden"><h2>Your code</h2></section>
   <section id="transcript" class="card hidden"><h2>Transcript</h2></section>
+  <button id="deleteBtn" class="end" type="button">Delete this interview</button>
 </main>
 
 <script src="/common.js"></script>
@@ -97,6 +98,12 @@ function render(s) {
     t.append(d);
   }
 }
+
+$('deleteBtn').onclick = async () => {
+  if (!confirm('Delete this interview, its transcript and its recording? This cannot be undone.')) return;
+  try { await api(`/api/sessions/${id}`, { method: 'DELETE' }); location.href = '/history.html'; }
+  catch (err) { $('msg').textContent = err.message; $('msg').className = 'error'; $('msg').classList.remove('hidden'); }
+};
 
 (async () => {
   try {

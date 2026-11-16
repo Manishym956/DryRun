@@ -51,15 +51,33 @@ uvicorn server:app --reload
 Open http://localhost:8000 in Chrome or Edge, allow the microphone, and use headphones for the best results.
 
 - `server.py`: FastAPI app. It plans the interview, relays audio to Gemini Live, and evaluates the transcript.
-- `interview.py`: interview state (adaptive difficulty, notes, transcript) and the interviewer prompt. Tests are in `test_interview.py`.
-- `static/`: `index.html` (setup and live interview), `report.html` (results and replay), `history.html` (progress dashboard).
-- Sessions and recordings are saved in `sessions/`.
-- Optional `.env` settings:
-  - `MAX_INTERVIEW_MINUTES` (default 30): the interviewer wraps up at this point, and the call ends 2 minutes later.
-  - `SESSIONS_PER_HOUR` (default 10): interviews allowed per IP address per hour.
-  - `LIVE_MODEL`, `TEXT_MODEL`: override the Gemini models.
+- `interview.py`: interview state (adaptive difficulty, notes, transcript) and the interviewer prompt.
+- `store.py`: storage. It uses Postgres when `DATABASE_URL` is set, otherwise `sessions/interviews.db` (SQLite).
+- `static/`: `index.html` (setup and live interview), `report.html` (results and replay), `history.html` (progress dashboard), `login.html`.
+- Tests: `python test_interview.py` and `python test_store.py` (set `DATABASE_URL` to run the store tests on Postgres).
 
-There are no logins: anyone who can reach the server can start interviews on your API key and see every past interview. Keep it on localhost.
+Run locally without `GOOGLE_CLIENT_ID` and there are no logins: everything belongs to a single local user. Only do this on localhost.
+
+Optional `.env` settings:
+
+- `GOOGLE_CLIENT_ID`: turns on Google sign-in. Each user sees only their own interviews.
+- `INTERVIEWS_PER_DAY` (default 3 with sign-in): interviews per user per day.
+- `DAILY_INTERVIEW_CAP` (default 100): interviews per day across all users, which caps your Gemini bill.
+- `SESSIONS_PER_HOUR` (default 10): interviews per user per hour.
+- `MAX_INTERVIEW_MINUTES` (default 30): the interviewer wraps up at this point, and the call ends 2 minutes later.
+- `LIVE_MODEL`, `TEXT_MODEL`: override the Gemini models.
+
+### Deploy to Render
+
+1. **Google sign-in:** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an *OAuth client ID* of type *Web application*. Under *Authorized JavaScript origins*, add `https://<your-app>.onrender.com` and `http://localhost:8000`. You don't need any redirect URIs. Copy the client ID.
+2. **Create the services:** push this repo to GitHub. In Render, choose **New > Blueprint** and pick the repo. `render.yaml` creates the web service and a Postgres database, and generates `SESSION_SECRET`.
+3. **Set the keys:** when Render asks, paste `GEMINI_API_KEY` and `GOOGLE_CLIENT_ID`.
+4. **Check the origin:** once the app is live, make sure its URL matches the origin you added in step 1.
+
+Free-tier limits:
+
+- The web service sleeps after 15 idle minutes, so the first visit after that takes about a minute.
+- Render's free Postgres expires after 30 days. Upgrade it before then or you lose the data.
 
 The original Streamlit app (`app.py`) still works with `streamlit run app.py`.
 

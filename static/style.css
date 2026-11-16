@@ -4,7 +4,9 @@
 body { margin:0; font:16px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); }
 main { max-width:860px; margin:24px auto 40px; padding:0 20px; }
 nav { display:flex; gap:16px; max-width:860px; margin:20px auto 0; padding:0 20px; }
-nav a { color:var(--muted); text-decoration:none; } nav a:hover, nav a[aria-current] { color:var(--text); }
+nav { align-items:center; } nav a { color:var(--muted); text-decoration:none; } nav a:hover, nav a[aria-current] { color:var(--text); }
+.nav-user { margin-left:auto; font-size:.9rem; }
+button.link { background:none; color:var(--muted); text-decoration:underline; } button.link:hover { color:var(--text); }
 h1 { font-size:1.6rem; margin:0 0 4px; } .sub { color:var(--muted); margin:0 0 24px; }
 h2 { font-size:1.2rem; margin:0 0 12px; } h3 { font-size:1rem; margin:20px 0 8px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }

@@ -29,6 +29,4 @@ openai>=1.43.0
 reportlab>=4.2.2
 
 # Voice-first interviewer (server.py)
-google-genai>=3.3.0
-fastapi>=0.115.0
-uvicorn>=0.30.0
+-r requirements-server.txt

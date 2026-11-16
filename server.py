@@ -4,53 +4,60 @@ import base64
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 from collections import defaultdict, deque
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import FileResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from google import genai
+from google.auth.transport import requests as google_requests
 from google.genai import types
+from google.oauth2 import id_token
 from pydantic import BaseModel, Field
-
-from interview import LEVELS, PERSONAS, Interview, normalize_topics
-from report import build_pdf
+from starlette.middleware.sessions import SessionMiddleware
 
 ROOT = Path(__file__).parent
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env")  # before importing store: it reads DATABASE_URL
+
+import store  # noqa: E402
+from interview import LEVELS, PERSONAS, Interview, normalize_topics  # noqa: E402
+from report import build_pdf  # noqa: E402
+
 if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
     raise SystemExit("Set GEMINI_API_KEY in .env - the voice interviewer cannot run without it.")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")  # unset = local mode: no sign-in, one user
+if os.getenv("RENDER") and not (GOOGLE_CLIENT_ID and os.getenv("SESSION_SECRET") and os.getenv("DATABASE_URL")):
+    raise SystemExit("On Render, GOOGLE_CLIENT_ID, SESSION_SECRET and DATABASE_URL must all be set.")
 
 LIVE_MODEL = os.getenv("LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 TEXT_MODEL = os.getenv("TEXT_MODEL", "gemini-2.5-flash")
 MAX_INTERVIEW_MINUTES = float(os.getenv("MAX_INTERVIEW_MINUTES", "30"))
-SESSIONS_PER_HOUR = int(os.getenv("SESSIONS_PER_HOUR", "10"))  # per client IP
-SESSIONS_DIR = ROOT / "sessions"
-SESSIONS_DIR.mkdir(exist_ok=True)
+SESSIONS_PER_HOUR = int(os.getenv("SESSIONS_PER_HOUR", "10"))  # per user
+INTERVIEWS_PER_DAY = int(os.getenv("INTERVIEWS_PER_DAY", "3" if GOOGLE_CLIENT_ID else "1000"))  # per user
+DAILY_INTERVIEW_CAP = int(os.getenv("DAILY_INTERVIEW_CAP", "100"))  # all users together: caps the Gemini bill
 MAX_RESUME_BYTES = 5 * 1024 * 1024
-MAX_RECORDING_BYTES = 100 * 1024 * 1024
+MAX_RECORDING_BYTES = 25 * 1024 * 1024  # the browser records at 32 kbps: ~7 MB for 30 minutes
 MAX_CODE_CHARS = 20_000
 RESUME_MIMES = {"application/pdf", "text/plain"}
-RECORDING_TYPES = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a"}
+RECORDING_TYPES = {"audio/webm", "audio/ogg", "audio/mp4"}
 
 log = logging.getLogger("interviewer")
 client = genai.Client(http_options={"api_version": "v1beta"})  # Live API 404s on the SDK default version
 app = FastAPI()
-
-# shortcut: every session lives in memory and in sessions/*.json; fine for one user, move to Postgres for many.
-SESSIONS: dict[str, Interview] = {}
-for _f in SESSIONS_DIR.glob("*.json"):
-    try:
-        _iv = Interview.from_dict(json.loads(_f.read_text(encoding="utf-8")))
-        SESSIONS[_iv.id] = _iv
-    except Exception:
-        log.warning("skipping unreadable session file %s", _f.name)
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET") or secrets.token_hex(32),
+                   https_only=bool(os.getenv("RENDER")), max_age=30 * 86400)
+store.init()
+LOCAL_USER = "local"
+# shortcut: in-process state, so run a single instance (Render's default); move to the DB to scale out.
+ACTIVE: set[str] = set()  # interviews with a live call right now: one call per interview
 
 
 # ---------- Schemas ----------
@@ -115,30 +122,49 @@ class InsightsRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
 
+class GoogleLogin(BaseModel):
+    credential: str = Field(min_length=1, max_length=10_000)
+
+
 # ---------- Helpers ----------
 
-def get_session(sid: str) -> Interview:
-    iv = SESSIONS.get(sid)
-    if not iv:
+def session_user(session: dict) -> str | None:
+    return session.get("uid") if GOOGLE_CLIENT_ID else LOCAL_USER
+
+
+def current_user(request: Request) -> str:
+    uid = session_user(request.session)
+    if not uid:
+        raise HTTPException(401, "Sign in first")
+    return uid
+
+
+def owned(sid: str, uid: str) -> Interview:
+    iv = store.get(sid)
+    if not iv or iv.user_id != uid:  # someone else's interview looks the same as a missing one
         raise HTTPException(404, "Unknown session")
     return iv
 
 
-def save(iv: Interview) -> None:
-    (SESSIONS_DIR / f"{iv.id}.json").write_text(json.dumps(asdict(iv), indent=2), encoding="utf-8")
+# shortcut: in-memory limiter, resets on restart; the daily quota in the database is the real cap.
+_hits: dict[str, deque] = defaultdict(deque)
 
 
-# shortcut: in-memory per-IP limiter, resets on restart and sees the proxy's IP behind a reverse proxy.
-_starts: dict[str, deque] = defaultdict(deque)
-
-
-def rate_limit(ip: str) -> None:
-    now, q = time.time(), _starts[ip]
+def rate_limit(key: str, limit: int, what: str) -> None:
+    now, q = time.time(), _hits[key]
     while q and now - q[0] > 3600:
         q.popleft()
-    if len(q) >= SESSIONS_PER_HOUR:
-        raise HTTPException(429, f"Limit of {SESSIONS_PER_HOUR} interviews per hour reached, try again later")
+    if len(q) >= limit:
+        raise HTTPException(429, f"Limit of {limit} {what} per hour reached, try again later")
     q.append(now)
+
+
+def check_quota(uid: str) -> None:
+    since = time.time() - 86400
+    if store.count_since(since, uid) >= INTERVIEWS_PER_DAY:
+        raise HTTPException(429, f"You can start {INTERVIEWS_PER_DAY} interviews per day. Try again tomorrow.")
+    if store.count_since(since) >= DAILY_INTERVIEW_CAP:
+        raise HTTPException(503, "The interviewer is at capacity for today. Try again tomorrow.")
 
 
 async def generate(contents, schema):
@@ -150,11 +176,52 @@ async def generate(contents, schema):
     return resp.parsed
 
 
+# ---------- Auth ----------
+
+@app.get("/api/config")
+def config():
+    return {"google_client_id": GOOGLE_CLIENT_ID}
+
+
+@app.post("/api/auth/google")
+def google_login(req: GoogleLogin, request: Request):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(400, "Sign-in is not configured")
+    try:
+        claims = id_token.verify_oauth2_token(req.credential, google_requests.Request(), GOOGLE_CLIENT_ID)
+    except ValueError:
+        raise HTTPException(401, "Google sign-in failed, try again")
+    if not claims.get("email_verified"):
+        raise HTTPException(401, "Your Google email is not verified")
+    uid = "google:" + claims["sub"]
+    store.upsert_user(uid, claims["email"], claims.get("name") or claims["email"], time.time())
+    request.session.clear()
+    request.session["uid"] = uid
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def me(uid: str = Depends(current_user)):
+    if uid == LOCAL_USER:
+        return {"id": uid, "email": "", "name": "", "local": True}
+    user = store.get_user(uid)
+    if not user:
+        raise HTTPException(401, "Sign in first")
+    return user
+
+
 # ---------- REST ----------
 
 @app.post("/api/sessions")
-async def create_session(req: NewSession, request: Request):
-    rate_limit(request.client.host if request.client else "unknown")
+async def create_session(req: NewSession, uid: str = Depends(current_user)):
+    rate_limit("start:" + uid, SESSIONS_PER_HOUR, "interviews")
+    await asyncio.to_thread(check_quota, uid)
     coding = ("Make exactly one topic (not the first) a coding problem: kind 'coding', with a self-contained problem "
               "statement solvable in about 10 minutes, including one example input and output. "
               if req.coding_round else "Do not include coding problems. ")
@@ -183,32 +250,42 @@ async def create_session(req: NewSession, request: Request):
         raise HTTPException(502, "Could not generate an interview plan, try again")
     iv = Interview(id=uuid.uuid4().hex, name=req.name.strip(), role=req.role.strip(), persona=req.persona,
                    difficulty=req.difficulty, candidate_summary=plan.candidate_summary,
-                   topics=normalize_topics([t.model_dump() for t in plan.topics], req.coding_round))
-    SESSIONS[iv.id] = iv
-    save(iv)
+                   topics=normalize_topics([t.model_dump() for t in plan.topics], req.coding_round), user_id=uid)
+    await asyncio.to_thread(store.put, iv)
     return {"id": iv.id, "topic_count": len(iv.topics), "max_minutes": MAX_INTERVIEW_MINUTES}
 
 
 @app.get("/api/sessions")
-def list_sessions():
+def list_sessions(uid: str = Depends(current_user)):
     rows = [{"id": iv.id, "name": iv.name, "role": iv.role, "difficulty": iv.difficulty, "persona": iv.persona,
              "created_at": iv.created_at, "ended": iv.ended,
              "recommendation": (iv.evaluation or {}).get("hiringRecommendation"),
              "scores": {s["dimension"]: s["score"] for s in (iv.evaluation or {}).get("scores", [])}}
-            for iv in SESSIONS.values()]
-    return sorted(rows, key=lambda r: r["created_at"], reverse=True)
+            for iv in store.list_for(uid)]
+    return rows
 
 
 @app.get("/api/sessions/{sid}")
-def session_detail(sid: str):
-    return asdict(get_session(sid))
+def session_detail(sid: str, uid: str = Depends(current_user)):
+    return asdict(owned(sid, uid)) | {"recording": store.recording_mime(sid)}
+
+
+@app.delete("/api/sessions/{sid}")
+def delete_session(sid: str, uid: str = Depends(current_user)):
+    owned(sid, uid)
+    if sid in ACTIVE:
+        raise HTTPException(409, "This interview is still in progress")
+    store.delete(sid)
+    return {"ok": True}
 
 
 @app.post("/api/sessions/{sid}/evaluate")
-async def evaluate(sid: str):
-    iv = get_session(sid)
+async def evaluate(sid: str, uid: str = Depends(current_user)):
+    iv = await asyncio.to_thread(owned, sid, uid)
     if iv.evaluation:
         return iv.evaluation
+    if sid in ACTIVE:
+        raise HTTPException(409, "This interview is still in progress")
     if not any(t["speaker"] == "user" for t in iv.turns):
         raise HTTPException(400, "The candidate did not say anything, nothing to evaluate")
     code = iv.code_for_eval()
@@ -227,13 +304,13 @@ async def evaluate(sid: str):
         + f"\n\nInterviewer notes per topic: {json.dumps(iv.notes)}\n\nTranscript:\n{iv.transcript_text(timestamps=True)}"
         + (f"\n\n{code}" if code else ""))
     iv.evaluation = (await generate(prompt, Evaluation)).model_dump()
-    save(iv)
+    await asyncio.to_thread(store.put, iv)
     return iv.evaluation
 
 
 @app.get("/api/sessions/{sid}/report.pdf")
-def report_pdf(sid: str):
-    iv = get_session(sid)
+def report_pdf(sid: str, uid: str = Depends(current_user)):
+    iv = owned(sid, uid)
     if not iv.evaluation:
         raise HTTPException(400, "Evaluate the interview first")
     return Response(build_pdf(iv.evaluation, iv.name, iv.role), media_type="application/pdf",
@@ -241,12 +318,12 @@ def report_pdf(sid: str):
 
 
 @app.post("/api/sessions/{sid}/recording")
-async def upload_recording(sid: str, request: Request):
-    iv = get_session(sid)
-    ext = RECORDING_TYPES.get(request.headers.get("content-type", "").split(";")[0].strip())
-    if not ext:
+async def upload_recording(sid: str, request: Request, uid: str = Depends(current_user)):
+    await asyncio.to_thread(owned, sid, uid)
+    mime = request.headers.get("content-type", "").split(";")[0].strip()
+    if mime not in RECORDING_TYPES:
         raise HTTPException(400, "Recording must be webm, ogg or mp4 audio")
-    if iv.recording:
+    if await asyncio.to_thread(store.recording_mime, sid):
         raise HTTPException(409, "This interview already has a recording")
     body = bytearray()
     async for chunk in request.stream():
@@ -255,24 +332,28 @@ async def upload_recording(sid: str, request: Request):
             raise HTTPException(413, "Recording too large")
     if not body:
         raise HTTPException(400, "Empty recording")
-    iv.recording = f"{iv.id}.{ext}"
-    (SESSIONS_DIR / iv.recording).write_bytes(body)
-    save(iv)
+    try:
+        await asyncio.to_thread(store.put_recording, sid, mime, bytes(body))
+    except Exception:
+        log.exception("saving recording for %s failed", sid)
+        raise HTTPException(409, "This interview already has a recording")  # lost a race with another upload
     return {"ok": True}
 
 
 @app.get("/api/sessions/{sid}/recording")
-def get_recording(sid: str):
-    iv = get_session(sid)
-    if not iv.recording:
+def get_recording(sid: str, uid: str = Depends(current_user)):
+    owned(sid, uid)
+    rec = store.get_recording(sid)
+    if not rec:
         raise HTTPException(404, "No recording for this interview")
-    ext = iv.recording.rsplit(".", 1)[-1]
-    return FileResponse(SESSIONS_DIR / iv.recording, media_type={v: k for k, v in RECORDING_TYPES.items()}[ext])
+    return Response(rec[1], media_type=rec[0])
 
 
 @app.post("/api/insights")
-async def insights(req: InsightsRequest):
-    done = [iv for iv in SESSIONS.values() if iv.name.lower() == req.name.strip().lower() and iv.evaluation]
+async def insights(req: InsightsRequest, uid: str = Depends(current_user)):
+    rate_limit("insights:" + uid, 10, "weak-spot analyses")
+    mine = await asyncio.to_thread(store.list_for, uid)
+    done = [iv for iv in mine if iv.name.lower() == req.name.strip().lower() and iv.evaluation]
     if not done:
         raise HTTPException(404, "No evaluated interviews for this name yet")
     history = [{"date": time.strftime("%Y-%m-%d", time.localtime(iv.created_at)), "role": iv.role,
@@ -369,10 +450,17 @@ WRAP_UP_SECONDS = 120  # after the time-up nudge, hard stop this much later
 
 @app.websocket("/ws/{sid}")
 async def interview_socket(ws: WebSocket, sid: str):
-    iv = SESSIONS.get(sid)
-    if not iv or iv.ended:
-        await ws.close(code=4404 if not iv else 4409)  # an ended interview can't be reopened (and re-billed)
+    origin = ws.headers.get("origin", "")
+    if origin and urlparse(origin).netloc != ws.headers.get("host"):
+        await ws.close(code=4403)  # another site trying to ride the user's cookie
         return
+    uid = session_user(ws.session)
+    iv = await asyncio.to_thread(store.get, sid) if uid else None
+    if not iv or iv.user_id != uid or iv.ended or sid in ACTIVE:
+        # an ended interview can't be reopened (and re-billed), and one interview gets one call at a time
+        await ws.close(code=4404 if not iv or iv.user_id != uid else 4409)
+        return
+    ACTIVE.add(sid)
     await ws.accept()
     iv.started_at = time.time()  # turn timestamps line up with the browser's recording from here
     deadline = iv.started_at + MAX_INTERVIEW_MINUTES * 60
@@ -485,7 +573,8 @@ async def interview_socket(ws: WebSocket, sid: str):
     finally:
         reader.cancel()
         iv.ended = True
-        save(iv)
+        ACTIVE.discard(sid)
+        await asyncio.to_thread(store.put, iv)
     try:
         if error:
             await ws.send_json({"type": "error", "text": "The interview connection failed and could not be restored."})

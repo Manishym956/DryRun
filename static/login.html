@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · AI Interviewer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <h1>AI Interviewer</h1>
+  <p class="sub">Practice spoken technical interviews with an AI that listens, follows up and scores you.</p>
+  <section class="card">
+    <h2>Sign in</h2>
+    <div id="google"></div>
+    <p id="msg" role="status" class="status"></p>
+    <p class="muted">We store your interview transcripts, code, scores and (if you choose) voice recordings so you can
+      review them later. Only you can see them, and you can delete any interview from its report page.</p>
+  </section>
+</main>
+<script>
+const msg = document.getElementById('msg');
+const next = new URLSearchParams(location.search).get('next');
+const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';  // same-site paths only
+
+async function onCredential({ credential }) {
+  msg.textContent = 'Signing in…'; msg.className = 'status';
+  const res = await fetch('/api/auth/google', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) });
+  if (res.ok) return location.replace(target);
+  msg.textContent = (await res.json().catch(() => ({}))).detail || 'Sign-in failed, try again.'; msg.className = 'error';
+}
+
+(async () => {
+  const { google_client_id } = await (await fetch('/api/config')).json();
+  if (!google_client_id) return location.replace('/');  // local mode: no accounts
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.onload = () => {
+    google.accounts.id.initialize({ client_id: google_client_id, callback: onCredential });
+    google.accounts.id.renderButton(document.getElementById('google'), { theme: 'filled_black', size: 'large', text: 'continue_with' });
+  };
+  s.onerror = () => { msg.textContent = 'Could not load Google sign-in. Check your connection or ad blocker.'; msg.className = 'error'; };
+  document.head.append(s);
+})();
+</script>
+</body>
+</html>

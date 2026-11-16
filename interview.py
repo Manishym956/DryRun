@@ -39,9 +39,9 @@ class Interview:
     evaluation: dict | None = None
     started_at: float = field(default_factory=time.time)  # reset when the call connects; turn t_ms count from here
     code: dict[str, str] = field(default_factory=dict)  # topic index (str, for JSON) -> latest editor contents
-    recording: str | None = None  # file name in sessions/
     difficulty: str = ""
     created_at: float = field(default_factory=time.time)
+    user_id: str = ""
 
     def next_topic(self) -> dict:
         self.idx += 1

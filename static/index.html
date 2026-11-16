@@ -110,7 +110,7 @@ async function startInterview() {
   if ($('record').checked && mime) {
     recDest = playCtx.createMediaStreamDestination();
     playCtx.createMediaStreamSource(micStream).connect(recDest);
-    recorder = new MediaRecorder(recDest.stream, { mimeType: mime });
+    recorder = new MediaRecorder(recDest.stream, { mimeType: mime, audioBitsPerSecond: 32000 });  // speech is fine at 32 kbps; keeps uploads small
     recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
   }
 

@@ -1,0 +1,10 @@
+# Voice interviewer (server.py) only: this is what Render installs.
+google-genai>=3.3.0
+google-auth>=2.30.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.1
+reportlab>=4.2.2
+psycopg[binary]>=3.2.0
+itsdangerous>=2.1.0
+requests>=2.32.3
