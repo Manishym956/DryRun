@@ -14,6 +14,13 @@
   <p id="msg" role="status" class="status">Loading…</p>
 
   <section id="results" class="card hidden" aria-live="polite"></section>
+  <section id="share" class="card hidden">
+    <h2>Share your scorecard</h2>
+    <p class="muted">Anyone with the link sees your name, role, scores and summary. Never the transcript, code or recording.</p>
+    <div id="shareBox"></div>
+  </section>
+  <section id="delivery" class="card hidden"><h2>Delivery</h2></section>
+  <section id="peerFeedback" class="card hidden"><h2>Feedback for the interviewer</h2></section>
   <section id="replay" class="card hidden">
     <h2>Replay</h2>
     <audio id="player" controls preload="auto"></audio>
@@ -63,6 +70,7 @@ function playButton(seconds, label) {
 function render(s) {
   const ev = s.evaluation;
   const r = $('results'); r.replaceChildren(); r.classList.remove('hidden');
+  if (s.challenge) r.append(el('p', ev.hiringRecommendation === 'Yes' ? '🏆 You survived the bar-raiser!' : 'The bar-raiser won this time. Try again!', 'pill'));
   r.append(el('h2', `Recommendation: ${ev.hiringRecommendation}`), el('p', ev.overallFeedback));
   for (const sc of ev.scores) {
     const row = el('div', null, 'score');
@@ -87,16 +95,64 @@ function render(s) {
   const code = Object.entries(s.code || {}).filter(([, c]) => c.trim());
   if (code.length) {
     $('code').classList.remove('hidden');
-    for (const [i, c] of code) $('code').append(el('h3', s.topics[+i]?.topic ?? 'Coding'), el('pre', c));
+    for (const [i, c] of code) {
+      const t = s.test_results?.[i];
+      $('code').append(el('h3', s.topics[+i]?.topic ?? 'Coding'),
+        el('p', t ? `${t.passed} / ${t.total} tests passed (${t.language})` : `Tests not run (${s.language})`, 'muted'), el('pre', c));
+    }
   }
+  for (const [i, d] of Object.entries(s.diagram || {})) {
+    if (!d.svg && !d.text) continue;
+    $('code').classList.remove('hidden');
+    $('code').append(el('h3', `Whiteboard: ${s.topics[+i]?.topic ?? 'Design'}`));
+    if (d.svg) {
+      const img = el('img', null, 'diagram'); img.alt = 'Your whiteboard diagram'; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(d.svg);
+      $('code').append(img);
+    }
+    if (d.text) $('code').append(el('pre', d.text));
+  }
+
+  renderDelivery(s.speech);
+  if (s.peer_feedback) { $('peerFeedback').classList.remove('hidden'); $('peerFeedback').append(el('p', s.peer_feedback)); }
+  if (s.owner) renderShare(s.share_token);
 
   const t = $('transcript'); t.classList.remove('hidden');
   for (const turn of s.turns) {
     const d = el('div', null, 'turn ' + turn.speaker);
     if (hasAudio) d.append(playButton(turn.t_ms / 1000, fmtTime(turn.t_ms / 1000)));
-    d.append(el('b', turn.speaker === 'ai' ? 'Interviewer: ' : 'You: '), el('span', turn.text));
+    d.append(el('b', turn.speaker === 'ai' ? 'Interviewer: ' : s.owner ? 'You: ' : 'Candidate: '), el('span', turn.text));
     t.append(d);
   }
+}
+
+function renderDelivery(sp) {
+  if (!sp) return;
+  const box = $('delivery'); box.classList.remove('hidden');
+  const tiles = el('div', null, 'tiles');
+  const tile = (n, label, note) => { const t = el('div', null, 'tile'); t.append(el('div', n, 'n'), el('div', label), el('div', note, 'muted')); tiles.append(t); };
+  tile(sp.wpm ?? '–', 'words per minute', sp.wpm == null ? 'not enough timed speech' : sp.wpm < 110 ? 'on the slow side' : sp.wpm > 170 ? 'quite fast: slow down a little' : 'a comfortable pace');
+  tile(sp.fillers_per_100_words, 'filler words per 100', sp.fillers_per_100_words > 3 ? 'try pausing instead' : 'nicely controlled');
+  tile(sp.words, 'words spoken', '');
+  box.append(tiles);
+  const top = Object.entries(sp.fillers).slice(0, 5).map(([w, n]) => `"${w}" ×${n}`).join(', ');
+  if (top) box.append(el('p', `Most used: ${top}`, 'muted'));
+  box.append(el('p', 'Counted from speech-to-text, which drops some fillers, so treat these as a lower bound.', 'muted'));
+}
+
+function renderShare(token) {
+  const box = $('shareBox'); box.replaceChildren(); $('share').classList.remove('hidden');
+  if (!token) {
+    const b = el('button', 'Create share link'); b.type = 'button';
+    b.onclick = async () => { b.disabled = true; try { renderShare((await api(`/api/sessions/${id}/share`, { method: 'POST' })).token); } catch (err) { box.append(el('p', err.message, 'error')); b.disabled = false; } };
+    box.append(b); return;
+  }
+  const link = el('input'); link.readOnly = true; link.value = `${location.origin}/scorecard.html?t=${token}`; link.setAttribute('aria-label', 'Share link');
+  const copy = el('button', 'Copy link', 'small'); copy.type = 'button';
+  copy.onclick = () => navigator.clipboard.writeText(link.value).then(() => { copy.textContent = 'Copied'; });
+  const stop = el('button', 'Stop sharing', 'small link'); stop.type = 'button';
+  stop.onclick = async () => { await api(`/api/sessions/${id}/share`, { method: 'DELETE' }); renderShare(''); };
+  const row = el('div', null, 'editor-bar'); row.append(copy, stop);
+  box.append(link, row);
 }
 
 $('deleteBtn').onclick = async () => {
@@ -110,7 +166,9 @@ $('deleteBtn').onclick = async () => {
     if (!id) throw new Error('No interview selected.');
     let s = await api(`/api/sessions/${id}`);
     $('title').textContent = `${s.name}: ${s.role}`;
-    $('meta').textContent = [fmtDate(s.created_at), s.difficulty, PERSONA_LABELS[s.persona]].filter(Boolean).join(' · ');
+    $('meta').textContent = [fmtDate(s.created_at), s.difficulty, s.mode === 'peer' ? 'Peer mock' : PERSONA_LABELS[s.persona],
+      s.company && `${s.company} style`, s.challenge && 'Bar-raiser challenge'].filter(Boolean).join(' · ');
+    if (!s.owner) $('deleteBtn').classList.add('hidden');
     if (s.recording) await loadRecording().catch(err => console.warn('recording unavailable', err));
     if (!s.evaluation) {
       if (!s.turns.some(t => t.speaker === 'user')) throw new Error('This interview has no answers to evaluate.');

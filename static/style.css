@@ -1,6 +1,7 @@
 :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#9aa3b2; --accent:#6ea8ff; --ok:#4cc38a; --bad:#ff6b6b;
         --s1:#3987e5; --s2:#d95926; --s3:#199e70; /* chart series, validated on --card */ }
 * { box-sizing:border-box; }
+a { color:var(--accent); }
 body { margin:0; font:16px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); }
 main { max-width:860px; margin:24px auto 40px; padding:0 20px; }
 nav { display:flex; gap:16px; max-width:860px; margin:20px auto 0; padding:0 20px; }
@@ -44,3 +45,15 @@ td.num { font-variant-numeric:tabular-nums; }
 .tooltip { position:absolute; pointer-events:none; background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:.85rem; min-width:160px; }
 .tooltip i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
 @media (max-width:640px) { .row { grid-template-columns:1fr; } }
+fieldset.modes { border:0; padding:0; margin:0 0 4px; } fieldset.modes legend { color:var(--muted); font-size:.9rem; padding:0; }
+.editor-bar { display:flex; gap:10px; align-items:center; margin:12px 0 8px; } .editor-bar label { margin:0; } .editor-bar select { width:auto; }
+.editor { height:340px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.whiteboard { height:480px; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin-bottom:12px; }
+.test { margin:6px 0; } .test pre { margin-top:4px; } .ok { color:var(--ok); }
+.plan-topic { margin-bottom:8px; } .rate { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+.rate button[aria-pressed=true] { outline:2px solid var(--text); } #nextTopic { margin-left:auto; }
+img.diagram { max-width:100%; background:#121212; border-radius:8px; }
+.tiles { display:flex; gap:12px; flex-wrap:wrap; } .tile { flex:1; min-width:140px; } .tile .n { font-size:1.8rem; font-weight:700; }
+.badges { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }
+.badge { border:1px solid var(--line); border-radius:10px; padding:10px; } .badge.locked { opacity:.45; } .badge b { display:block; }
+.pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--line); font-size:.8rem; color:var(--muted); }

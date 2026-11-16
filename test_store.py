@@ -49,8 +49,10 @@ def test_recordings_and_delete():
         raise
     except Exception:
         pass
+    store.share("tok-" + iv.id, iv.id)
+    assert store.shared("tok-" + iv.id) == iv and store.shared("nope") is None
     store.delete(iv.id)
-    assert store.get(iv.id) is None and store.get_recording(iv.id) is None
+    assert store.get(iv.id) is None and store.get_recording(iv.id) is None and store.shared("tok-" + iv.id) is None
 
 
 def test_users():

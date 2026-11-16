@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock interview scorecard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <p class="muted">Mock interview scorecard · AI Interviewer</p>
+  <h1 id="title">Scorecard</h1>
+  <p id="meta" class="sub"></p>
+  <p id="msg" role="status" class="status">Loading…</p>
+  <section id="card" class="card hidden"></section>
+  <p class="muted">This is a practice interview scored by AI, not a hiring decision. <a href="/">Practice your own</a></p>
+</main>
+<script>
+// No common.js: this page is public and must not redirect visitors to sign in.
+const $ = id => document.getElementById(id);
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
+(async () => {
+  const res = await fetch(`/api/share/${encodeURIComponent(new URLSearchParams(location.search).get('t') || '')}`);
+  if (!res.ok) { $('msg').textContent = 'This scorecard is not shared (anymore).'; $('msg').className = 'error'; return; }
+  const s = await res.json();
+  $('msg').classList.add('hidden');
+  $('title').textContent = `${s.name}: ${s.role}`;
+  $('meta').textContent = [new Date(s.created_at * 1000).toLocaleDateString(), s.difficulty, s.mode === 'peer' ? 'Peer mock' : null,
+    s.company && `${s.company} style`, s.challenge && 'Bar-raiser challenge'].filter(Boolean).join(' · ');
+  const c = $('card'); c.classList.remove('hidden');
+  if (s.challenge && s.recommendation === 'Yes') c.append(el('p', '🏆 Survived the bar-raiser', 'pill'));
+  c.append(el('h2', `Recommendation: ${s.recommendation}`), el('p', s.overallFeedback));
+  for (const sc of s.scores) {
+    const row = el('div', null, 'score');
+    row.append(el('div', sc.score ?? '–', 'n'), el('b', sc.dimension));
+    c.append(row);
+  }
+})();
+</script>
+</body>
+</html>

@@ -18,6 +18,7 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS interviews_by_user ON interviews (user_id, created_at)",
     # shortcut: recordings live in the database (~7 MB per 30 min); move to object storage if the DB outgrows its plan.
     "CREATE TABLE IF NOT EXISTS recordings (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data BYTEA NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS shares (token TEXT PRIMARY KEY, interview_id TEXT NOT NULL)",
 ]
 
 
@@ -77,8 +78,22 @@ def count_since(ts: float, uid: str | None = None) -> int:
 
 
 def delete(sid: str) -> None:
+    _run("DELETE FROM shares WHERE interview_id = %s", (sid,))
     _run("DELETE FROM recordings WHERE id = %s", (sid,))
     _run("DELETE FROM interviews WHERE id = %s", (sid,))
+
+
+def share(token: str, sid: str) -> None:
+    _run("INSERT INTO shares (token, interview_id) VALUES (%s, %s)", (token, sid))
+
+
+def unshare(sid: str) -> None:
+    _run("DELETE FROM shares WHERE interview_id = %s", (sid,))
+
+
+def shared(token: str) -> Interview | None:
+    rows = _run("SELECT interview_id FROM shares WHERE token = %s", (token,), fetch=True)
+    return get(rows[0][0]) if rows else None
 
 
 def put_recording(sid: str, mime: str, data: bytes) -> None:

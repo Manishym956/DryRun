@@ -14,6 +14,11 @@
 
   <section id="setup" class="card">
     <form id="setupForm">
+      <fieldset class="modes">
+        <legend>Who interviews you?</legend>
+        <label class="check"><input type="radio" name="mode" value="ai" checked> The AI interviewer</label>
+        <label class="check"><input type="radio" name="mode" value="peer"> A friend (peer mock; the AI referees)</label>
+      </fieldset>
       <div class="row">
         <div><label for="name">Your name</label><input id="name" required maxlength="100" autocomplete="name"></div>
         <div><label for="role">Role</label><input id="role" required maxlength="100" value="Software Engineer"></div>
@@ -21,32 +26,82 @@
       <div class="row">
         <div><label for="difficulty">Level</label>
           <select id="difficulty"><option>Beginner</option><option selected>Intermediate</option><option>Advanced</option></select></div>
-        <div><label for="persona">Interviewer</label>
+        <div class="ai-only"><label for="persona">Interviewer</label>
           <select id="persona">
             <option value="friendly">Friendly mentor</option>
             <option value="bar_raiser">Tough bar-raiser</option>
-            <option value="startup_cto">Startup CTO</option>
+            <option value="startup_cto">Startup CTO (impatient, cuts in)</option>
           </select></div>
+      </div>
+      <div class="row">
+        <div><label for="company">Company style (optional)</label>
+          <select id="company"><option value="">None</option></select></div>
+      </div>
+      <div id="customCompany" class="hidden">
+        <label for="companyName">Company name</label><input id="companyName" maxlength="100">
+        <label for="companyNotes">What this company looks for (values, culture, interview style)</label>
+        <textarea id="companyNotes" maxlength="2000"></textarea>
       </div>
       <label for="resume">Resume (PDF or .txt, optional)</label><input id="resume" type="file" accept=".pdf,.txt">
       <label for="jd">Job description (optional)</label><textarea id="jd" maxlength="20000" placeholder="Paste the job description to get targeted questions"></textarea>
       <label class="check"><input id="coding" type="checkbox" checked> Include a coding round</label>
+      <label class="check"><input id="design" type="checkbox"> Include a system design whiteboard round</label>
+      <label class="check ai-only"><input id="challenge" type="checkbox"> Challenge: survive the bar-raiser (hardest settings, pass = a "Yes")</label>
       <label class="check"><input id="record" type="checkbox" checked> Record the interview for replay</label>
       <button id="startBtn" type="submit">Prepare interview</button>
       <p id="setupMsg" role="status"></p>
     </form>
   </section>
 
+  <section id="invite" class="card hidden">
+    <h2>Invite your interviewer</h2>
+    <p>Send this link to the friend who will interview you. They sign in, open it, and the call starts when you are both here.</p>
+    <input id="inviteLink" readonly aria-label="Invite link">
+    <button id="copyInvite" type="button" class="small">Copy link</button>
+  </section>
+
   <section id="live" class="card hidden">
     <div class="live-head"><span id="status" class="status" role="status">Connecting…</span><span id="timer" class="muted"></span></div>
     <div id="orb" class="orb" aria-hidden="true"></div>
+
+    <div id="plan-panel" class="hidden">
+      <h2>Your interview plan</h2>
+      <p class="muted">You are the interviewer. Ask about the current topic, follow up, then rate it and move on.</p>
+      <div id="planTopic" class="plan-topic"></div>
+      <label for="noteGaps">Your notes on this answer</label>
+      <textarea id="noteGaps" maxlength="2000"></textarea>
+      <div class="rate"><span class="muted">Rate the answer:</span>
+        <button type="button" class="small" data-rate="1">1</button><button type="button" class="small" data-rate="2">2</button>
+        <button type="button" class="small" data-rate="3">3</button><button type="button" class="small" data-rate="4">4</button>
+        <button type="button" class="small" data-rate="5">5</button>
+        <button id="nextTopic" type="button" class="small">Next topic →</button></div>
+      <div id="peerCode" class="hidden"><h3>Candidate's code</h3><pre id="peerCodeText"></pre></div>
+      <div id="peerDiagram" class="hidden"><h3>Candidate's whiteboard</h3><img id="peerDiagramImg" alt="The candidate's whiteboard diagram" class="diagram"></div>
+    </div>
+
     <div id="coding-panel" class="hidden">
       <h2 id="problemTitle"></h2>
       <pre id="problem"></pre>
-      <label for="code">Your code (the interviewer can read it)</label>
-      <textarea id="code" class="code" spellcheck="false" autocapitalize="off"></textarea>
+      <div class="editor-bar">
+        <label for="language">Language</label>
+        <select id="language"><option value="python">Python</option><option value="javascript">JavaScript</option>
+          <option value="java">Java (class Main)</option><option value="cpp">C++</option></select>
+        <button id="runBtn" type="button" class="small hidden">Run tests</button>
+      </div>
+      <div id="editor" class="editor hidden" role="group" aria-label="Code editor"></div>
+      <textarea id="code" class="code" spellcheck="false" autocapitalize="off" aria-label="Your code (the interviewer can read it)"></textarea>
+      <p class="muted" id="ioNote">Read input from standard input and print the answer.</p>
+      <div id="tests" aria-live="polite"></div>
     </div>
-    <h3>Captions</h3>
+
+    <div id="design-panel" class="hidden">
+      <h2 id="designTitle"></h2>
+      <pre id="designProblem"></pre>
+      <p class="muted">Draw boxes for components and connect them with arrows. Label everything; the interviewer reads the labels.</p>
+      <div id="whiteboard" class="whiteboard"></div>
+    </div>
+
+    <h3 id="captionsTitle">Captions</h3>
     <div id="captions" aria-live="polite"></div>
     <button id="endBtn" class="end" type="button">End interview</button>
   </section>
@@ -55,7 +110,27 @@
 <script src="/common.js"></script>
 <script>
 let ws, sessionId, micCtx, playCtx, micStream, recDest, recorder, playTime = 0, maxMinutes = 30, startedAt;
+let mode = 'ai', role = 'candidate';  // peer mode: candidate (created it) or interviewer (joined by link)
 const playing = new Set(), recChunks = [];
+const params = new URLSearchParams(location.search);
+const joinId = params.get('join');
+
+api('/api/config').then(cfg => {
+  for (const c of cfg.companies) $('company').append(new Option(c.name, c.id));
+  $('company').append(new Option('Other company…', 'custom'));
+  window.CAN_RUN = cfg.run_tests;
+}).catch(() => {});
+
+$('company').onchange = () => $('customCompany').classList.toggle('hidden', $('company').value !== 'custom');
+$('challenge').onchange = () => {
+  const on = $('challenge').checked;
+  if (on) { $('persona').value = 'bar_raiser'; $('difficulty').value = 'Advanced'; }
+  $('persona').disabled = $('difficulty').disabled = on;
+};
+for (const r of document.querySelectorAll('input[name=mode]')) r.onchange = () => {
+  mode = document.querySelector('input[name=mode]:checked').value;
+  document.querySelectorAll('.ai-only').forEach(e => e.classList.toggle('hidden', mode === 'peer'));
+};
 
 $('setupForm').onsubmit = async e => {
   e.preventDefault();
@@ -65,7 +140,9 @@ $('setupForm').onsubmit = async e => {
   $('startBtn').disabled = true; $('setupMsg').textContent = 'Reading your background and planning questions…'; $('setupMsg').className = '';
   try {
     const body = { name: $('name').value.trim(), role: $('role').value.trim(), difficulty: $('difficulty').value,
-                   persona: $('persona').value, job_description: $('jd').value, coding_round: $('coding').checked };
+                   persona: $('persona').value, job_description: $('jd').value, coding_round: $('coding').checked,
+                   design_round: $('design').checked, company: $('company').value, company_name: $('companyName').value,
+                   company_notes: $('companyNotes').value, challenge: mode === 'ai' && $('challenge').checked, mode };
     const file = $('resume').files[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) throw new Error('Resume must be under 5 MB');
@@ -74,11 +151,30 @@ $('setupForm').onsubmit = async e => {
     }
     const s = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     sessionId = s.id; maxMinutes = s.max_minutes;
+    if (mode === 'peer') {
+      $('inviteLink').value = `${location.origin}/?join=${s.id}`;
+      $('invite').classList.remove('hidden');
+    }
     await startInterview();
   } catch (err) {
     $('setupMsg').textContent = err.message; $('setupMsg').className = 'error'; $('startBtn').disabled = false;
   }
 };
+$('copyInvite').onclick = () => navigator.clipboard.writeText($('inviteLink').value).then(() => { $('copyInvite').textContent = 'Copied'; });
+
+// Joining a friend's peer interview as the interviewer.
+if (joinId) {
+  mode = 'peer'; role = 'interviewer'; sessionId = joinId;
+  $('setup').replaceChildren(el('h2', 'Join a peer mock interview'),
+    el('p', 'You will interview your friend using the plan the AI prepared. You both need a microphone; headphones help.'),
+    Object.assign(el('button', 'Join the call'), { type: 'button', id: 'joinBtn' }));
+  $('joinBtn').onclick = async () => {
+    playCtx ??= new AudioContext({ sampleRate: 24000 });
+    micCtx ??= new AudioContext({ sampleRate: 16000 });
+    $('joinBtn').disabled = true;
+    try { await startInterview(); } catch (err) { $('setup').append(el('p', err.message, 'error')); $('joinBtn').disabled = false; }
+  };
+}
 
 function fileToBase64(file) {
   return new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = fail; r.readAsDataURL(file); });
@@ -87,6 +183,8 @@ function fileToBase64(file) {
 async function startInterview() {
   micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   $('setup').classList.add('hidden'); $('live').classList.remove('hidden');
+  if (mode === 'peer') { $('orb').classList.add('hidden'); $('captionsTitle').classList.add('hidden'); }
+  if (role === 'interviewer') $('plan-panel').classList.remove('hidden');
   await Promise.all([playCtx.resume(), micCtx.resume()]);
 
   const worklet = `class Mic extends AudioWorkletProcessor { process(i) { if (i[0][0]) this.port.postMessage(i[0][0].slice(0)); return true; } } registerProcessor('mic', Mic);`;
@@ -105,25 +203,24 @@ async function startInterview() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(pcm.buffer);
   };
 
-  // Recording: mix the mic and the interviewer's voice into one track.
+  // Recording (candidate only): mix the mic and the other side's voice into one track.
   const mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(m => window.MediaRecorder?.isTypeSupported(m));
-  if ($('record').checked && mime) {
+  if (role === 'candidate' && $('record').checked && mime) {
     recDest = playCtx.createMediaStreamDestination();
     playCtx.createMediaStreamSource(micStream).connect(recDest);
     recorder = new MediaRecorder(recDest.stream, { mimeType: mime, audioBitsPerSecond: 32000 });  // speech is fine at 32 kbps; keeps uploads small
     recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
   }
 
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/${sessionId}`);
+  const path = mode === 'peer' ? `/ws/peer/${sessionId}` : `/ws/${sessionId}`;
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
-    recorder?.start(1000);  // the server starts its transcript clock at the same moment
-    startedAt = Date.now();
-    setInterval(() => { $('timer').textContent = `${fmtTime((Date.now() - startedAt) / 1000)} / ${fmtTime(maxMinutes * 60)}`; }, 1000);
-    $('status').textContent = 'Live. Speak naturally; you can interrupt at any time.';
+    if (mode === 'ai') startClock();
+    $('status').textContent = mode === 'ai' ? 'Live. Speak naturally; you can interrupt at any time.' : 'Waiting for the other person to join…';
   };
   ws.onmessage = ({ data }) => {
-    if (data instanceof ArrayBuffer) return play(data);
+    if (data instanceof ArrayBuffer) return play(data, mode === 'peer' ? 16000 : 24000);
     const msg = JSON.parse(data);
     if (msg.type === 'transcript') caption(msg.speaker, msg.text);
     else if (msg.type === 'interrupted') stopPlayback();
@@ -131,39 +228,194 @@ async function startInterview() {
     else if (msg.type === 'error') connectionError = msg.text;
     else if (msg.type === 'limits') maxMinutes = msg.max_minutes;
     else if (msg.type === 'topic') showTopic(msg);
+    else if (msg.type === 'tests') showTests(msg);
+    else if (msg.type === 'peer') peerStatus(msg);
+    else if (msg.type === 'code_view') { $('peerCode').classList.remove('hidden'); $('peerCodeText').textContent = `[${msg.language}]\n${msg.code}`; }
+    else if (msg.type === 'diagram_view' && msg.svg) { $('peerDiagram').classList.remove('hidden'); $('peerDiagramImg').src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(msg.svg); }
     else if (msg.type === 'ended') finish();
   };
   ws.onclose = () => finish();
   $('endBtn').onclick = () => { $('endBtn').disabled = true; if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end' })); };
 }
 
+let clock;
+function startClock() {
+  if (clock) return;
+  recorder?.start(1000);  // the server starts its transcript clock at the same moment
+  startedAt = Date.now();
+  clock = setInterval(() => { $('timer').textContent = `${fmtTime((Date.now() - startedAt) / 1000)} / ${fmtTime(maxMinutes * 60)}`; }, 1000);
+}
+
+function peerStatus(msg) {
+  if (msg.status === 'connected') {
+    startClock();
+    $('invite').classList.add('hidden');
+    $('status').textContent = role === 'interviewer' ? 'Connected. Introduce yourself and start with the first topic.' : 'Connected. Your interviewer is here.';
+  } else if (msg.status === 'left') $('status').textContent = 'The other person disconnected. Waiting for them to rejoin…';
+  else if (msg.status === 'waiting') $('status').textContent = 'Waiting for the other person to join…';
+}
+
+// ----- Peer interviewer controls -----
+let rating = null;
+document.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => {
+  rating = +b.dataset.rate;
+  document.querySelectorAll('[data-rate]').forEach(x => x.setAttribute('aria-pressed', x === b));
+});
+$('nextTopic').onclick = () => {
+  if (rating) ws.send(JSON.stringify({ type: 'note', strength: rating, gaps: $('noteGaps').value }));
+  ws.send(JSON.stringify({ type: 'next' }));
+  rating = null; $('noteGaps').value = '';
+  document.querySelectorAll('[data-rate]').forEach(x => x.setAttribute('aria-pressed', 'false'));
+};
+
 function showTopic(msg) {
-  const coding = msg.kind === 'coding';
+  if (role === 'interviewer') {
+    const box = $('planTopic'); box.replaceChildren();
+    if (msg.done) { box.append(el('p', 'All topics covered. Thank your friend and end the interview.')); return; }
+    box.append(el('h3', `${msg.topic} (${msg.difficulty || ''})`), el('p', msg.focus || '', 'muted'));
+    if (msg.problem) box.append(el('pre', msg.problem));
+    if (msg.remaining != null) box.append(el('p', `${msg.remaining} topics left after this one.`, 'muted'));
+    return;
+  }
+  const coding = msg.kind === 'coding', design = msg.kind === 'design';
   $('coding-panel').classList.toggle('hidden', !coding);
-  if (!coding) return;
-  $('problemTitle').textContent = msg.topic; $('problem').textContent = msg.problem;
-  if (!$('code').value) $('code').value = msg.code || '';
-  $('code').focus();
+  $('design-panel').classList.toggle('hidden', !design);
+  if (coding) {
+    $('problemTitle').textContent = msg.topic; $('problem').textContent = msg.problem;
+    $('runBtn').classList.toggle('hidden', !msg.can_run);
+    if (msg.language) $('language').value = msg.language;
+    if (!getCode()) setCode(msg.code || STARTERS[$('language').value]);
+    loadEditor();
+  }
+  if (design) {
+    $('designTitle').textContent = msg.topic; $('designProblem').textContent = msg.problem;
+    loadWhiteboard();
+  }
+}
+
+// ----- Code editor: Monaco from a CDN, falling back to the plain textarea -----
+const STARTERS = {
+  python: 'import sys\n\ndef main():\n    data = sys.stdin.read().split()\n    \n\nmain()\n',
+  javascript: "const data = require('fs').readFileSync(0, 'utf8').trim().split(/\\s+/);\n\n",
+  java: 'import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner in = new Scanner(System.in);\n        \n    }\n}\n',
+  cpp: '#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    \n    return 0;\n}\n',
+};
+const MONACO_LANG = { python: 'python', javascript: 'javascript', java: 'java', cpp: 'cpp' };
+const MONACO = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs';
+let editor = null, editorLoading = null;
+const getCode = () => editor ? editor.getValue() : $('code').value;
+const setCode = v => editor ? editor.setValue(v) : ($('code').value = v);
+
+function loadEditor() {
+  editorLoading ??= new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = `${MONACO}/loader.js`;
+    s.onerror = fail;
+    s.onload = () => {
+      // Workers can't load cross-origin directly; a data: URL that imports them can.
+      window.MonacoEnvironment = { getWorkerUrl: () => 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+        `self.MonacoEnvironment={baseUrl:'${MONACO.replace(/vs$/, '')}'};importScripts('${MONACO}/base/worker/workerMain.js');`) };
+      require.config({ paths: { vs: MONACO } });
+      require(['vs/editor/editor.main'], ok, fail);
+    };
+    document.head.append(s);
+  }).then(() => {
+    $('editor').classList.remove('hidden'); $('code').classList.add('hidden');
+    editor = monaco.editor.create($('editor'), { value: $('code').value, language: MONACO_LANG[$('language').value], theme: 'vs-dark',
+      automaticLayout: true, minimap: { enabled: false }, fontSize: 14, tabSize: 4, accessibilitySupport: 'auto' });
+    editor.onDidChangeModelContent(codeChanged);
+  }).catch(err => console.warn('Monaco unavailable, using the plain editor', err));
 }
 
 let codeTimer;
-$('code').addEventListener('input', () => {
+function codeChanged() {
   clearTimeout(codeTimer);
-  codeTimer = setTimeout(() => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'code', code: $('code').value })), 800);
-});
+  codeTimer = setTimeout(() => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'code', code: getCode(), language: $('language').value })), 800);
+}
+$('code').addEventListener('input', codeChanged);
 $('code').addEventListener('keydown', e => {
   if (e.key !== 'Tab' || e.shiftKey) return;  // Shift+Tab still leaves the editor for keyboard users
   e.preventDefault();
   $('code').setRangeText('    ', $('code').selectionStart, $('code').selectionEnd, 'end');
   $('code').dispatchEvent(new Event('input'));
 });
+$('language').onchange = () => {
+  const lang = $('language').value;
+  if (!getCode().trim() || Object.values(STARTERS).includes(getCode())) setCode(STARTERS[lang]);
+  if (editor) monaco.editor.setModelLanguage(editor.getModel(), MONACO_LANG[lang]);
+  codeChanged();
+};
+$('runBtn').onclick = () => {
+  $('runBtn').disabled = true;
+  $('tests').replaceChildren(el('p', 'Running your code against the tests…', 'muted'));
+  ws.send(JSON.stringify({ type: 'run', code: getCode(), language: $('language').value }));
+};
 
-function play(buf) {
+function showTests(msg) {
+  $('runBtn').disabled = false;
+  const box = $('tests'); box.replaceChildren();
+  if (msg.error) { box.append(el('p', msg.error, 'error')); return; }
+  box.append(el('p', `${msg.passed} / ${msg.total} tests passed`, msg.passed === msg.total ? 'ok' : 'error'));
+  msg.results.forEach((r, i) => {
+    const d = el('div', null, 'test');
+    d.append(el('b', `${r.passed ? '✓' : '✗'} Test ${i + 1}${r.visible ? ' (example)' : ' (hidden)'}`));
+    if (r.visible) d.append(el('pre', `input:\n${r.stdin}\nexpected:\n${r.expected}\nyour output:\n${r.stdout || ''}${r.error ? '\nerror:\n' + r.error : ''}`));
+    else if (r.error) d.append(el('span', ` ${r.error}`, 'muted'));
+    box.append(d);
+  });
+}
+
+// ----- Whiteboard: Excalidraw from a CDN; the interviewer gets a text description of it -----
+let boardLoading = null;
+function loadWhiteboard() {
+  boardLoading ??= (async () => {
+    window.EXCALIDRAW_ASSET_PATH = 'https://unpkg.com/@excalidraw/excalidraw@0.17.6/dist/';
+    const [React, ReactDOM, ExMod] = await Promise.all([
+      import('https://esm.sh/react@18.3.1'), import('https://esm.sh/react-dom@18.3.1/client'),
+      import('https://esm.sh/@excalidraw/excalidraw@0.17.6?deps=react@18.3.1,react-dom@18.3.1')]);
+    const Ex = ExMod.Excalidraw ? ExMod : ExMod.default;  // 0.17 is CommonJS: esm.sh puts it under default
+    let timer, last = '';
+    const onChange = (elements, appState, files) => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const sig = elements.map(e => e.id + ':' + e.version).join();
+        if (sig === last) return;
+        last = sig;
+        const live = elements.filter(e => !e.isDeleted);
+        const svg = await Ex.exportToSvg({ elements: live, appState: { ...appState, exportBackground: true, exportWithDarkMode: true }, files });
+        ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'diagram', text: describeDiagram(live), svg: svg.outerHTML }));
+      }, 1500);
+    };
+    ReactDOM.createRoot($('whiteboard')).render(React.createElement(Ex.Excalidraw, {
+      theme: 'dark', onChange, UIOptions: { canvasActions: { loadScene: false, saveToActiveFile: false, export: false } } }));
+  })().catch(err => { $('whiteboard').replaceChildren(el('p', 'The whiteboard could not load. Describe your design out loud instead.', 'error')); console.warn(err); });
+}
+
+function describeDiagram(live) {
+  const byId = Object.fromEntries(live.map(e => [e.id, e]));
+  const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+  const label = e => clean(live.find(x => x.type === 'text' && x.containerId === e.id)?.text);
+  const name = e => e ? (label(e) || clean(e.text) || `an unlabelled ${e.type}`) : 'nothing';
+  const lines = [];
+  for (const e of live) {
+    if (['rectangle', 'ellipse', 'diamond'].includes(e.type)) lines.push(`Box: ${name(e)}`);
+    else if (e.type === 'arrow') {
+      const l = label(e);
+      lines.push(`Arrow: ${name(byId[e.startBinding?.elementId])} -> ${name(byId[e.endBinding?.elementId])}${l ? ` (${l})` : ''}`);
+    } else if (e.type === 'text' && !e.containerId) lines.push(`Note: ${clean(e.text)}`);
+  }
+  return lines.join('\n');
+}
+
+// ----- Audio -----
+function play(buf, rate) {
   const pcm = new Int16Array(buf), f = new Float32Array(pcm.length);
   for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768;
-  const b = playCtx.createBuffer(1, f.length, 24000); b.copyToChannel(f, 0);
+  const b = playCtx.createBuffer(1, f.length, rate); b.copyToChannel(f, 0);
   const src = playCtx.createBufferSource(); src.buffer = b; src.connect(playCtx.destination);
   if (recDest) src.connect(recDest);
+  // Peer audio arrives live: never let it queue up more than ~0.3 s behind real time.
+  if (mode === 'peer' && playTime - playCtx.currentTime > 0.3) playTime = playCtx.currentTime;
   playTime = Math.max(playTime, playCtx.currentTime); src.start(playTime); playTime += b.duration;
   playing.add(src); $('orb').classList.add('speaking');
   src.onended = () => { playing.delete(src); if (!playing.size) $('orb').classList.remove('speaking'); };

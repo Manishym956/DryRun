@@ -13,6 +13,12 @@
   <p class="sub">Scores across your mock interviews, and what keeps coming up.</p>
   <p id="msg" role="status" class="status">Loading…</p>
 
+  <section id="streak" class="card hidden">
+    <div class="tiles" id="streakTiles"></div>
+    <h3>Badges</h3>
+    <div class="badges" id="badges"></div>
+  </section>
+
   <div id="content" class="hidden">
     <label for="who">Candidate</label>
     <select id="who" style="width:auto;min-width:220px;margin-bottom:16px"></select>
@@ -133,7 +139,8 @@ function render() {
   const tb = $('rows'); tb.replaceChildren();
   for (const r of mine) {
     const tr = el('tr');
-    const cells = [fmtDate(r.created_at), r.role, r.difficulty || '–', PERSONA_LABELS[r.persona] || r.persona,
+    const who = r.mode === 'peer' ? 'Peer mock' : (PERSONA_LABELS[r.persona] || r.persona) + (r.challenge ? ' (challenge)' : '');
+    const cells = [fmtDate(r.created_at), r.role + (r.company ? ` · ${r.company}` : ''), r.difficulty || '–', who,
                    ...DIMS.map(d => r.scores[d.key] ?? '–'), r.recommendation || 'Not evaluated'];
     cells.forEach((c, i) => tr.append(el('td', c, i >= 4 && i <= 6 ? 'num' : '')));
     const td = el('td'), a = el('a', 'Report'); a.href = `/report.html?id=${encodeURIComponent(r.id)}`; a.style.color = 'var(--accent)';
@@ -157,7 +164,23 @@ $('insightsBtn').onclick = async () => {
   b.disabled = false;
 };
 
+async function renderProgress() {
+  const p = await api(`/api/progress?tz=${new Date().getTimezoneOffset()}`);
+  if (!p.interviews) return;
+  $('streak').classList.remove('hidden');
+  const tile = (n, label) => { const t = el('div', null, 'tile'); t.append(el('div', n, 'n'), el('div', label, 'muted')); return t; };
+  $('streakTiles').replaceChildren(tile(`🔥 ${p.streak}`, 'day streak'),
+    tile(p.best_streak, 'best streak'), tile(p.interviews, 'interviews finished'));
+  $('badges').replaceChildren(...p.badges.map(b => {
+    const d = el('div', null, 'badge' + (b.earned ? '' : ' locked'));
+    d.append(el('b', (b.earned ? '🏅 ' : '🔒 ') + b.name), el('span', b.how, 'muted'));
+    d.setAttribute('aria-label', `${b.name}: ${b.earned ? 'earned' : 'not earned yet'}. ${b.how}`);
+    return d;
+  }));
+}
+
 (async () => {
+  renderProgress().catch(err => console.warn('progress unavailable', err));
   try {
     all = (await api('/api/sessions')).filter(r => r.ended);
     if (!all.length) { $('msg').textContent = 'No interviews yet. Start one from "New interview".'; return; }

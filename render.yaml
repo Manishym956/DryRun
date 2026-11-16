@@ -24,6 +24,10 @@ services:
         value: "3"
       - key: DAILY_INTERVIEW_CAP
         value: "100"
+      - key: JUDGE0_URL  # optional: enables "Run tests" in the coding round
+        sync: false
+      - key: JUDGE0_KEY
+        sync: false
 
 databases:
   - name: ai-interviewer-db

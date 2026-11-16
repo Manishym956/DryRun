@@ -38,9 +38,14 @@ reportlab>=4.2.2
 
 A live spoken interview: the AI listens, asks follow-ups, adapts difficulty to your answers, and tailors questions to your resume and the job description. It's built on the Gemini Live API.
 
-- **Coding round:** a problem and an editor appear on screen, and the interviewer reads your code and asks about it.
-- **Replay:** the interview is recorded. In the report, click any question or caption to jump to that moment.
-- **History:** scores over time, every past interview, and an AI summary of your recurring weak spots.
+- **Interviewers:** a friendly mentor, a tough bar-raiser, or an impatient startup CTO who cuts in when you ramble. Each one checks in if you go quiet.
+- **Company styles:** Amazon, Google, Meta, Microsoft, Netflix, Stripe, or a company and values you describe yourself. The questions and the scoring follow that company's values.
+- **Coding round:** a problem with a Monaco editor (Python, JavaScript, Java or C++). The interviewer reads your code. If Judge0 is set up, **Run tests** checks your code against hidden tests.
+- **System design round:** an Excalidraw whiteboard. The interviewer reads your boxes and arrows as text.
+- **Peer mock:** a friend interviews you from the AI's plan by opening an invite link. The AI transcribes the call afterwards and scores you, and gives your friend feedback on their interviewing.
+- **Feedback:** each question's report puts your answer next to a model answer. You also get speaking pace and filler-word counts, and you can click any moment to replay it.
+- **History:** your score trend, practice streaks, badges, a "Survive the bar-raiser" challenge, and an AI summary of your recurring weak spots.
+- **Sharing:** a public scorecard link with your scores and summary only. It never includes the transcript, code or recording, and you can revoke it.
 - **Reliability:** if the connection to Gemini drops, the interview reconnects and continues.
 
 ```sh
@@ -52,8 +57,9 @@ Open http://localhost:8000 in Chrome or Edge, allow the microphone, and use head
 
 - `server.py`: FastAPI app. It plans the interview, relays audio to Gemini Live, and evaluates the transcript.
 - `interview.py`: interview state (adaptive difficulty, notes, transcript) and the interviewer prompt.
+- `judge.py`: runs code against hidden tests on Judge0. `progress.py`: streaks and badges.
 - `store.py`: storage. It uses Postgres when `DATABASE_URL` is set, otherwise `sessions/interviews.db` (SQLite).
-- `static/`: `index.html` (setup and live interview), `report.html` (results and replay), `history.html` (progress dashboard), `login.html`.
+- `static/`: `index.html` (setup and live interview), `report.html` (results and replay), `history.html` (progress dashboard), `login.html`, `scorecard.html` (public share page).
 - Tests: `python test_interview.py` and `python test_store.py` (set `DATABASE_URL` to run the store tests on Postgres).
 
 Run locally without `GOOGLE_CLIENT_ID` and there are no logins: everything belongs to a single local user. Only do this on localhost.
@@ -66,6 +72,8 @@ Optional `.env` settings:
 - `SESSIONS_PER_HOUR` (default 10): interviews per user per hour.
 - `MAX_INTERVIEW_MINUTES` (default 30): the interviewer wraps up at this point, and the call ends 2 minutes later.
 - `LIVE_MODEL`, `TEXT_MODEL`: override the Gemini models.
+- `JUDGE0_URL`, `JUDGE0_KEY`: a [Judge0](https://judge0.com) server for **Run tests**. Use `https://judge0-ce.p.rapidapi.com` with your RapidAPI key, which has a free tier, or a Judge0 you host yourself. Without these, the coding round still works, but the code isn't run. Candidate code is never run on this server.
+- `MAX_PEER_ROOMS` (default 5): how many peer calls can run at once. Each one keeps its audio on local disk until the referee has transcribed it.
 
 ### Deploy to Render
 
