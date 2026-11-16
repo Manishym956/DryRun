@@ -15,7 +15,7 @@
 
   <div id="content" class="hidden">
     <label for="who">Candidate</label>
-    <select id="who"></select>
+    <select id="who" style="width:auto;min-width:220px;margin-bottom:16px"></select>
 
     <section class="card">
       <h2>Scores over time</h2>
@@ -79,6 +79,11 @@ function drawChart(rows) {  // rows: oldest first, evaluated only
       new Date(r.created_at * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   });
 
+  // Dodge: series with the same score at the same interview sit side by side instead of hiding each other.
+  const px = (i, key) => {
+    const v = rows[i].scores[key], tied = DIMS.filter(d => rows[i].scores[d.key] === v);
+    return x(i) + (tied.findIndex(d => d.key === key) - (tied.length - 1) / 2) * 7;
+  };
   const ends = [];
   for (const d of DIMS) {
     // Break the line where a dimension was not assessed instead of drawing through it.
@@ -86,15 +91,15 @@ function drawChart(rows) {  // rows: oldest first, evaluated only
     rows.forEach((r, i) => {
       const v = r.scores[d.key];
       if (v == null) { pen = false; return; }
-      path += `${pen ? 'L' : 'M'}${x(i)},${y(v)} `; pen = true;
+      path += `${pen ? 'L' : 'M'}${px(i, d.key)},${y(v)} `; pen = true;
     });
     if (path) svg('path', { d: path, fill: 'none', stroke: d.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, root);
     rows.forEach((r, i) => {
       const v = r.scores[d.key];
-      if (v != null) svg('circle', { cx: x(i), cy: y(v), r: 4, fill: d.color, stroke: 'var(--card)', 'stroke-width': 2 }, root);
+      if (v != null) svg('circle', { cx: px(i, d.key), cy: y(v), r: 4, fill: d.color, stroke: 'var(--card)', 'stroke-width': 2 }, root);
     });
     const last = rows.map((r, i) => [i, r.scores[d.key]]).filter(([, v]) => v != null).pop();
-    if (last) ends.push({ d, x: x(last[0]), y: y(last[1]) });
+    if (last) ends.push({ d, x: x(last[0]) + 10, y: y(last[1]) });
   }
   // Direct labels at line ends, nudged apart so equal scores don't overlap.
   ends.sort((a, b) => a.y - b.y);

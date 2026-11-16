@@ -13,6 +13,17 @@ PERSONAS = {
 }
 
 
+def normalize_topics(topics: list[dict], coding_round: bool) -> list[dict]:
+    """Keep at most one coding topic (none if the round is off): the planner ignores that instruction."""
+    seen = False
+    for t in topics:
+        if t.get("kind") == "coding" and coding_round and not seen:
+            seen = True
+        else:
+            t.update(kind="discussion", problem="")
+    return topics
+
+
 @dataclass
 class Interview:
     id: str

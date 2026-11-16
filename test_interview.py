@@ -49,6 +49,14 @@ def test_coding_topic_and_code_tracking():
     assert "Code written for 'T1'" in iv.code_for_eval()
 
 
+def test_normalize_topics():
+    from interview import normalize_topics
+    mk = lambda: [{"kind": k, "problem": "p" if k == "coding" else ""} for k in ["discussion", "coding", "coding"]]
+    assert [t["kind"] for t in normalize_topics(mk(), True)] == ["discussion", "coding", "discussion"]
+    off = normalize_topics(mk(), False)
+    assert [t["kind"] for t in off] == ["discussion"] * 3 and all(t["problem"] == "" for t in off)
+
+
 def test_roundtrip_and_timestamps():
     from dataclasses import asdict
     iv = make()

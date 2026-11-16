@@ -38,6 +38,11 @@ reportlab>=4.2.2
 
 A live spoken interview: the AI listens, asks follow-ups, adapts difficulty to your answers, and tailors questions to your resume and the job description. It's built on the Gemini Live API.
 
+- **Coding round:** a problem and an editor appear on screen, and the interviewer reads your code and asks about it.
+- **Replay:** the interview is recorded. In the report, click any question or caption to jump to that moment.
+- **History:** scores over time, every past interview, and an AI summary of your recurring weak spots.
+- **Reliability:** if the connection to Gemini drops, the interview reconnects and continues.
+
 ```sh
 pip install -r requirements.txt
 uvicorn server:app --reload
@@ -47,9 +52,14 @@ Open http://localhost:8000 in Chrome or Edge, allow the microphone, and use head
 
 - `server.py`: FastAPI app. It plans the interview, relays audio to Gemini Live, and evaluates the transcript.
 - `interview.py`: interview state (adaptive difficulty, notes, transcript) and the interviewer prompt. Tests are in `test_interview.py`.
-- `static/index.html`: the browser UI (mic capture, playback, live captions, report).
-- Sessions are saved to `sessions/*.json`.
-- Optional `.env` overrides: `LIVE_MODEL`, `TEXT_MODEL`.
+- `static/`: `index.html` (setup and live interview), `report.html` (results and replay), `history.html` (progress dashboard).
+- Sessions and recordings are saved in `sessions/`.
+- Optional `.env` settings:
+  - `MAX_INTERVIEW_MINUTES` (default 30): the interviewer wraps up at this point, and the call ends 2 minutes later.
+  - `SESSIONS_PER_HOUR` (default 10): interviews allowed per IP address per hour.
+  - `LIVE_MODEL`, `TEXT_MODEL`: override the Gemini models.
+
+There are no logins: anyone who can reach the server can start interviews on your API key and see every past interview. Keep it on localhost.
 
 The original Streamlit app (`app.py`) still works with `streamlit run app.py`.
 

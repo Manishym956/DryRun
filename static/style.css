@@ -28,7 +28,7 @@ button:disabled { opacity:.5; cursor:wait; } button.end { background:var(--bad);
 .live-head { display:flex; justify-content:space-between; align-items:center; }
 #captions { max-height:320px; overflow-y:auto; }
 .turn { margin:8px 0; } .turn b { color:var(--accent); } .turn.user b { color:var(--ok); }
-.turn button.ts { background:none; color:var(--muted); padding:0 6px 0 0; margin:0; font:500 .85rem ui-monospace,monospace; }
+.turn button.small { margin-right:8px; }
 .score { display:flex; gap:16px; padding:10px 0; border-bottom:1px solid var(--line); } .score .n { font-size:1.6rem; font-weight:700; min-width:48px; }
 .q { padding:12px 0; border-bottom:1px solid var(--line); } .q p { margin:4px 0; color:var(--muted); } .q p b { color:var(--text); }
 .q-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }

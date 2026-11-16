@@ -19,7 +19,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from interview import LEVELS, PERSONAS, Interview
+from interview import LEVELS, PERSONAS, Interview, normalize_topics
 from report import build_pdf
 
 ROOT = Path(__file__).parent
@@ -183,7 +183,7 @@ async def create_session(req: NewSession, request: Request):
         raise HTTPException(502, "Could not generate an interview plan, try again")
     iv = Interview(id=uuid.uuid4().hex, name=req.name.strip(), role=req.role.strip(), persona=req.persona,
                    difficulty=req.difficulty, candidate_summary=plan.candidate_summary,
-                   topics=[t.model_dump() for t in plan.topics])
+                   topics=normalize_topics([t.model_dump() for t in plan.topics], req.coding_round))
     SESSIONS[iv.id] = iv
     save(iv)
     return {"id": iv.id, "topic_count": len(iv.topics), "max_minutes": MAX_INTERVIEW_MINUTES}
@@ -221,7 +221,9 @@ async def evaluate(sid: str):
         "hiringRecommendation must be Yes, No or Maybe. "
         "For each main question asked, give askedAtSeconds (the [Ns] timestamp where the interviewer asked it), "
         "summarize the candidate's answer, write a concise strong model answer, and state what was missing. "
-        + ("For coding questions, judge the code below for correctness, complexity and edge cases. " if code else "")
+        + ("For the coding question, judge the code below for correctness, complexity and edge cases inside that "
+           "question's review; do not add a separate entry for the code. " if code else "")
+        + "List only questions the interviewer actually asked. "
         + f"\n\nInterviewer notes per topic: {json.dumps(iv.notes)}\n\nTranscript:\n{iv.transcript_text(timestamps=True)}"
         + (f"\n\n{code}" if code else ""))
     iv.evaluation = (await generate(prompt, Evaluation)).model_dump()
@@ -335,7 +337,14 @@ def live_config(iv: Interview, handle: str | None) -> types.LiveConnectConfig:
     )
 
 
-def kickoff_text(iv: Interview, resuming: bool) -> str | None:
+TIME_UP = "(Time is up. Wrap up the current topic now, thank the candidate and call end_interview right after your goodbye.)"
+
+
+def kickoff_text(iv: Interview, resuming: bool, time_up: bool) -> str:
+    if time_up:
+        # Reconnected after the time-up nudge: a resumed model tends to forget it and carry on.
+        return ("(The connection dropped briefly and is restored. " if resuming else
+                f"(The connection dropped. Transcript so far:\n{iv.transcript_text()}\n") + TIME_UP[1:]
     if resuming:
         return "(The connection dropped briefly and is restored. Apologize in a few words and continue where you left off.)"
     if iv.idx < 0:
@@ -406,9 +415,8 @@ async def interview_socket(ws: WebSocket, sid: str):
             await asyncio.sleep(max(0, deadline - time.time()))
             warned = True
             await ws.send_json({"type": "status", "text": "Time is up, the interviewer is wrapping up."})
-            await live.send_client_content(turns=types.Content(role="user", parts=[types.Part(
-                text="(Time is up. Wrap up the current topic now, thank the candidate and call end_interview.)")]),
-                turn_complete=True)
+            await live.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=TIME_UP)]),
+                                           turn_complete=True)
         await asyncio.sleep(max(0, deadline + WRAP_UP_SECONDS - time.time()))  # then end, finished or not
 
     handle: str | None = None
@@ -451,7 +459,7 @@ async def interview_socket(ws: WebSocket, sid: str):
             try:
                 async with client.aio.live.connect(model=LIVE_MODEL, config=live_config(iv, handle)) as live:
                     await live.send_client_content(turns=types.Content(role="user", parts=[
-                        types.Part(text=kickoff_text(iv, resuming))]), turn_complete=True)
+                        types.Part(text=kickoff_text(iv, resuming, warned))]), turn_complete=True)
                     await ws.send_json(topic_event(iv))
                     if attempt:
                         await ws.send_json({"type": "status", "text": "Reconnected."})
