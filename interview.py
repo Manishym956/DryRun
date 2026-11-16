@@ -1,4 +1,4 @@
-"""Interview state and prompts for the voice interviewer. No I/O here, so it is testable."""
+"""Interview state and prompts for DryRun. No I/O here, so it is testable."""
 import re
 import time
 from collections import Counter

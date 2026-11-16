@@ -1,4 +1,6 @@
-# AI-Powered Interview Assistant
+# DryRun
+
+Practice interviews out loud with an AI interviewer (or a friend), then get a scored report.
 
 An interactive web application that conducts AI-driven technical interviews using video, audio, and text responses. Built with Streamlit and Google's Gemini AI.
 
@@ -34,7 +36,7 @@ azure-cognitiveservices-speech>=1.40.0
 reportlab>=4.2.2
 ```
 
-## Voice Interviewer (new)
+## DryRun voice interviewer (new)
 
 A live spoken interview: the AI listens, asks follow-ups, adapts difficulty to your answers, and tailors questions to your resume and the job description. It's built on the Gemini Live API.
 
@@ -77,7 +79,7 @@ Optional `.env` settings:
 
 ### Deploy to Render
 
-1. **Google sign-in:** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an *OAuth client ID* of type *Web application*. Under *Authorized JavaScript origins*, add `https://<your-app>.onrender.com` and `http://localhost:8000`. You don't need any redirect URIs. Copy the client ID.
+1. **Google sign-in:** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an *OAuth client ID* of type *Web application*. Under *Authorized JavaScript origins*, add your Render URL (e.g. `https://dryrun.onrender.com`) and `http://localhost:8000`. You don't need any redirect URIs. Copy the client ID.
 2. **Create the services:** push this repo to GitHub. In Render, choose **New > Blueprint** and pick the repo. `render.yaml` creates the web service and a Postgres database, and generates `SESSION_SECRET`.
 3. **Set the keys:** when Render asks, paste `GEMINI_API_KEY` and `GOOGLE_CLIENT_ID`.
 4. **Check the origin:** once the app is live, make sure its URL matches the origin you added in step 1.

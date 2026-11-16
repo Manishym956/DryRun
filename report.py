@@ -13,7 +13,7 @@ def build_pdf(report: Dict[str, Any], candidate_name: str, role: str) -> bytes:
 
     y = height - 1 * inch
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(1 * inch, y, "AI Interview Report")
+    c.drawString(1 * inch, y, "DryRun Interview Report")
     y -= 0.3 * inch
 
     c.setFont("Helvetica", 11)

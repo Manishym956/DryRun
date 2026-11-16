@@ -1,4 +1,4 @@
-# Voice interviewer (server.py) only: this is what Render installs.
+# DryRun (server.py) only: this is what Render installs.
 google-genai>=3.3.0
 google-auth>=2.30.0
 fastapi>=0.115.0

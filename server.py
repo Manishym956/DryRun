@@ -1,4 +1,4 @@
-"""Voice-first AI interviewer. Run: uvicorn server:app --reload  then open http://localhost:8000"""
+"""DryRun: voice-first AI mock interviewer. Run: uvicorn server:app --reload  then open http://localhost:8000"""
 import asyncio
 import base64
 import json
@@ -36,7 +36,7 @@ from progress import progress  # noqa: E402
 from report import build_pdf  # noqa: E402
 
 if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
-    raise SystemExit("Set GEMINI_API_KEY in .env - the voice interviewer cannot run without it.")
+    raise SystemExit("Set GEMINI_API_KEY in .env - DryRun cannot run without it.")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")  # unset = local mode: no sign-in, one user
 if os.getenv("RENDER") and not (GOOGLE_CLIENT_ID and os.getenv("SESSION_SECRET") and os.getenv("DATABASE_URL")):
     raise SystemExit("On Render, GOOGLE_CLIENT_ID, SESSION_SECRET and DATABASE_URL must all be set.")
@@ -361,7 +361,7 @@ def report_pdf(sid: str, uid: str = Depends(current_user)):
     if not iv.evaluation:
         raise HTTPException(400, "Evaluate the interview first")
     return Response(build_pdf(iv.evaluation, iv.name, iv.role), media_type="application/pdf",
-                    headers={"Content-Disposition": 'attachment; filename="interview_report.pdf"'})
+                    headers={"Content-Disposition": 'attachment; filename="dryrun_report.pdf"'})
 
 
 @app.post("/api/sessions/{sid}/recording")

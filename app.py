@@ -218,7 +218,7 @@ def read_aloud_button(text: str, key: str) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="AI Interviewer", layout="wide")
+    st.set_page_config(page_title="DryRun (classic)", layout="wide")
     configure_environment()
     init_session_state()
 
@@ -264,7 +264,7 @@ def main() -> None:
         if not os.getenv("GEMINI_API_KEY"):
             st.info("Add GEMINI_API_KEY to your .env for AI features. Fallback content will be used.")
 
-    st.title("Face-to-Face AI Interviewer (Text-first)")
+    st.title("DryRun (classic, text-first)")
 
     if not st.session_state.questions:
         st.write("Use the sidebar to generate interview questions.")
